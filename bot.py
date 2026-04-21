@@ -6,7 +6,6 @@ from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from motor.motor_asyncio import AsyncIOMotorClient
 from aiohttp import web
 from config import Config
-from tv_template_sheffy_samra import tv_template_sheffy_samra
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -23,7 +22,8 @@ class StreamBot(Client):
         self.db = self.db_client.get_database("StreamBot")
         self.settings = self.db.settings
         self.users = self.db.users
-        self.public_url = None # start() event me auto-detect hoga
+        # Removing auto-detect, strictly using FQDN from Config
+        self.public_url = Config.FQDN.rstrip('/')
 
     async def get_db_settings(self):
         data = await self.settings.find_one({"id": "config"})
@@ -50,46 +50,9 @@ class StreamBot(Client):
             logger.error(f"Shortener Error: {e}")
             return url
 
-    async def auto_detect_url(self):
-        # 1. Custom FQDN priority check
-        if Config.FQDN:
-            logger.info("Using custom FQDN.")
-            return Config.FQDN.rstrip('/')
-        
-        # 2. Render Auto-Detect
-        render_url = os.environ.get("RENDER_EXTERNAL_URL")
-        if render_url:
-            logger.info("Render platform detected.")
-            return render_url.rstrip('/')
-            
-        # 3. Koyeb Auto-Detect
-        koyeb_domain = os.environ.get("KOYEB_PUBLIC_DOMAIN")
-        if koyeb_domain:
-            logger.info("Koyeb platform detected.")
-            return f"https://{koyeb_domain}".rstrip('/')
-            
-        # 4. Heroku Auto-Detect (Requires HEROKU_APP_NAME in env vars)
-        heroku_app = os.environ.get("HEROKU_APP_NAME")
-        if heroku_app:
-            logger.info("Heroku platform detected.")
-            return f"https://{heroku_app}.herokuapp.com"
-            
-        # 5. VPS/Local IP Fallback detection
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get("https://api.ipify.org?format=text") as resp:
-                    ip = await resp.text()
-                    logger.info(f"VPS/Local IP auto-detected: {ip}")
-                    return f"http://{ip}:{Config.PORT}"
-        except Exception as e:
-            logger.error(f"Failed to fetch IP: {e}")
-            return f"http://127.0.0.1:{Config.PORT}" # Localhost fallback
-
     async def start(self):
         await super().start()
         
-        # Server URL auto-detection trigger karna
-        self.public_url = await self.auto_detect_url()
         logger.info(f"Bot & Stream Server starting... Links will use: {self.public_url}")
         
         # Web Server Setup
@@ -162,7 +125,7 @@ async def start_msg(c, m: Message):
 async def handle_file(c: StreamBot, m: Message):
     db = await c.get_db_settings()
     
-    # FSub check karna file processing se pehle
+    # FSub validation logic
     if db['fsub'] and Config.FORCE_SUB_CHANNEL:
         try:
             await c.get_chat_member(Config.FORCE_SUB_CHANNEL, m.from_user.id)
@@ -181,7 +144,7 @@ async def handle_file(c: StreamBot, m: Message):
     final_links = []
     buttons = []
     
-    # Multi-Shortener Link Generation process
+    # Multi-Shortener Link Iteration
     for i in range(1, 5):
         sh = db[f'sh{i}']
         if sh['status'] and sh['domain'] and sh['api']:
