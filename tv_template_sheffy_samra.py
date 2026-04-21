@@ -37,7 +37,6 @@ tv_template_sheffy_samra = """
         #tvControls { position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%) translateY(20px); width: 95%; background: var(--controls-bg); backdrop-filter: blur(15px); padding: 10px 15px; box-sizing: border-box; opacity: 0; transition: all 0.3s ease; z-index: 99; border-radius: 12px; border: 1px solid rgba(255,255,255,0.1); box-shadow: 0 10px 30px rgba(0,0,0,0.8); pointer-events: none; }
         .ui-awake #tvControls { opacity: 1; transform: translateX(-50%) translateY(0); pointer-events: auto; }
         
-        /* Thin 2px Seekbar with White Buffer line */
         .tv-progress-bg { width: 100%; height: 2px; background: rgba(255,255,255,0.2); border-radius: 2px; margin-bottom: 10px; position: relative; cursor: pointer; }
         .tv-buffer-fill { height: 100%; background: rgba(255,255,255,0.7); position: absolute; top: 0; left: 0; border-radius: 2px; z-index: 1; pointer-events: none; transition: width 0.2s; }
         .tv-progress-fill { height: 100%; background: var(--theme-color); width: 0%; border-radius: 2px; box-shadow: 0 0 10px var(--theme-color); position: relative; z-index: 2; pointer-events: none;}
@@ -54,7 +53,6 @@ tv_template_sheffy_samra = """
         .ui-awake .tv-menu-btn { opacity: 1; pointer-events: auto; }
         .tv-menu-btn svg { width: 20px; height: 20px; fill: white; }
 
-        /* 25% Smaller Menu */
         .tv-menu { display: none; position: absolute; top: 55px; right: 15px; background: rgba(15,15,15,0.98); border-radius: 8px; border: 1px solid #444; z-index: 200; min-width: 120px; overflow-y: auto; scrollbar-width: none; backdrop-filter: blur(15px); box-shadow: 0 10px 30px rgba(0,0,0,0.9); font-size: 11px; }
         .tv-menu::-webkit-scrollbar { display: none; }
         .menu-item { padding: 8px 12px; color: white; cursor: pointer; border-bottom: 1px solid #2a2a2a; outline: none; }
@@ -73,7 +71,6 @@ tv_template_sheffy_samra = """
         .video-wrapper.fullscreen-mode { position: fixed !important; top: 0; left: 0; width: 100vw !important; height: 100vh !important; z-index: 9999 !important; border-radius: 0 !important; background: #000; }
         .video-wrapper.fullscreen-mode #tvControls { bottom: max(15px, env(safe-area-inset-bottom)); width: calc(95% - env(safe-area-inset-left) - env(safe-area-inset-right)); }
         
-        /* White Action Bar */
         .content { padding: 15px; max-width: 800px; margin: 0 auto; }
         .action-bar { background: #ffffff; padding: 12px 20px; display: flex; justify-content: space-around; border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); align-items: center; }
         .action-btn { background: #111; color: #fff; border: none; padding: 10px 24px; border-radius: 8px; font-weight: 900; font-size: 12px; cursor: pointer; display: flex; align-items: center; gap: 8px; transition: 0.2s; box-shadow: 0 4px 10px rgba(0,0,0,0.2); }
@@ -109,7 +106,7 @@ tv_template_sheffy_samra = """
         <div class="dt-zone dt-center" id="dtCenter"></div>
         <div class="dt-zone dt-right" id="dtRight"></div>
 
-        <video id="player" playsinline preload="auto">
+        <video id="player" playsinline preload="auto" autoplay poster="[[THUMB_URL]]">
             <source src="[[STREAM_URL]]" type="[[MIME_TYPE]]">
         </video>
 
@@ -145,7 +142,7 @@ tv_template_sheffy_samra = """
 
     <div class="content">
         <div class="action-bar">
-            <button class="action-btn" onclick="window.location.href='[[STREAM_URL]]'">
+            <button class="action-btn" onclick="window.location.href='[[DOWNLOAD_URL]]'">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="white"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg> DOWNLOAD
             </button>
             <button class="action-btn" onclick="shareLink()">
@@ -171,6 +168,8 @@ tv_template_sheffy_samra = """
         document.getElementById('displayFileName').innerText = cleanName;
 
         video.addEventListener('loadedmetadata', () => {
+            // Note: Modern browsers may require user interaction for unmuted autoplay.
+            // If autoplay works, this promise resolves. If it gets blocked, it falls back to 'TAP TO PLAY'.
             video.play().then(() => {
                 showOSD("PLAYING");
                 wakeUI();
@@ -256,7 +255,6 @@ tv_template_sheffy_samra = """
         }
         video.addEventListener('timeupdate', syncSeekbarLive);
 
-        // Buffer Progress Logic
         video.addEventListener('progress', () => {
             if (video.duration > 0 && video.buffered.length > 0) {
                 for (let i = 0; i < video.buffered.length; i++) {
