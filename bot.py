@@ -24,6 +24,7 @@ class StreamBot(Client):
         self.settings = self.db.settings
         self.users = self.db.users
         self.public_url = Config.FQDN.rstrip('/')
+        self.chunk_size = 1048576 # Strict 1MB Chunk limit for Telegram API
 
     async def get_db_settings(self):
         data = await self.settings.find_one({"id": "config"})
@@ -79,7 +80,7 @@ class StreamBot(Client):
             file_name = getattr(file, 'file_name', None) or f"File_{msg_id}"
             mime_type = getattr(file, 'mime_type', None) or "video/mp4"
 
-            # Parse and inject data into HTML template
+            # Inject variables into HTML template
             html_content = tv_template_sheffy_samra.replace("[[STREAM_URL]]", stream_url)
             html_content = html_content.replace("[[FILE_NAME]]", file_name)
             html_content = html_content.replace("[[MIME_TYPE]]", mime_type)
@@ -93,44 +94,84 @@ class StreamBot(Client):
         try:
             msg_id = int(request.match_info['msg_id'])
             file_msg = await self.get_messages(Config.BIN_CHANNEL, msg_id)
+            
+            if not file_msg:
+                return web.Response(status=404, text="Message not found in database")
+                
             file = file_msg.document or file_msg.video or file_msg.audio
+            if not file:
+                return web.Response(status=404, text="Media not found in message")
             
-            range_header = request.headers.get("Range")
-            req_offset = int(range_header.replace("bytes=", "").split("-")[0]) if range_header else 0
-            
-            # Telegram strict 1MB chunk alignment math (Fixes 400 OFFSET_INVALID)
-            chunk_size = 1048576 
-            aligned_offset = req_offset - (req_offset % chunk_size)
-            skip_bytes = req_offset - aligned_offset
-
+            file_size = getattr(file, 'file_size', 0)
             file_name = getattr(file, 'file_name', None) or f"File_{msg_id}"
+            mime_type = getattr(file, 'mime_type', None) or "application/octet-stream"
 
-            res = web.StreamResponse(status=206 if range_header else 200, headers={
-                "Content-Type": file.mime_type or "application/octet-stream",
+            headers = {
+                "Content-Type": mime_type,
                 "Content-Disposition": f'inline; filename="{file_name}"',
                 "Accept-Ranges": "bytes",
-                "Content-Length": str(file.file_size - req_offset),
-                "Content-Range": f"bytes {req_offset}-{file.file_size-1}/{file.file_size}"
-            })
-            await res.prepare(request)
+            }
             
-            try:
-                first_chunk = True
-                async for chunk in self.stream_media(file, offset=aligned_offset):
-                    if first_chunk:
-                        chunk = chunk[skip_bytes:]
-                        first_chunk = False
-                    if not chunk:
-                        continue
-                    await res.write(chunk)
-                return res
-            except Exception as e:
-                # Silent client disconnects
-                if "closing transport" in str(e).lower() or "connection reset" in str(e).lower():
-                    pass 
-                else:
-                    logger.error(f"Streaming error: {e}")
-                return web.Response(status=499)
+            range_header = request.headers.get("Range")
+            
+            if range_header:
+                start, end = range_header.replace("bytes=", "").split("-")
+                start = int(start) if start else 0
+                end = int(end) if end else file_size - 1
+                length = end - start + 1
+                
+                headers["Content-Range"] = f"bytes {start}-{end}/{file_size}"
+                headers["Content-Length"] = str(length)
+                
+                response = web.StreamResponse(status=206, headers=headers)
+                await response.prepare(request)
+                
+                # Chunk index logic fixed here to prevent OFFSET_INVALID
+                offset_chunk = start // self.chunk_size
+                skip_bytes = start % self.chunk_size
+                
+                try:
+                    async for chunk in self.stream_media(file_msg, limit=0, offset=offset_chunk):
+                        if not chunk:
+                            break
+                            
+                        if skip_bytes > 0:
+                            chunk = chunk[skip_bytes:]
+                            skip_bytes = 0
+                            
+                        if len(chunk) > length:
+                            chunk = chunk[:length]
+                            
+                        await response.write(chunk)
+                        length -= len(chunk)
+                        
+                        if length <= 0:
+                            break
+                            
+                except Exception as e:
+                    # Ignore standard disconnect exceptions
+                    if "closing transport" in str(e).lower() or "connection reset" in str(e).lower() or "broken pipe" in str(e).lower():
+                        pass
+                    else:
+                        logger.error(f"Streaming connection closed abruptly: {e}")
+                return response
+                
+            else:
+                headers["Content-Length"] = str(file_size)
+                response = web.StreamResponse(status=200, headers=headers)
+                await response.prepare(request)
+                
+                try:
+                    async for chunk in self.stream_media(file_msg):
+                        if not chunk:
+                            break
+                        await response.write(chunk)
+                except Exception as e:
+                    if "closing transport" in str(e).lower() or "connection reset" in str(e).lower() or "broken pipe" in str(e).lower():
+                        pass
+                    else:
+                        logger.error(f"Streaming connection closed abruptly: {e}")
+                return response
                 
         except Exception as e: 
             logger.error(f"Stream handler setup error: {e}")
