@@ -12,7 +12,7 @@ class Config:
     OWNER_ID = [int(x) for x in _owner_raw.split() if x.strip().isdigit()]
     
     MONGO_URI = os.environ.get("MONGO_URI", "mongodb+srv://samplesamra:samplesamra@samplesamra.qtff1nr.mongodb.net/?appName=samplesamra")
-    BIN_CHANNEL = int(os.environ.get("BIN_CHANNEL", "-1003897251767"))
+    BIN_CHANNEL = int(os.environ.get("BIN_CHANNEL", "-1003820017953"))
     FORCE_SUB_CHANNEL = os.environ.get("FORCE_SUB_CHANNEL", "kamai4youpayment")
 
     PORT = int(os.environ.get("PORT", "8080"))
