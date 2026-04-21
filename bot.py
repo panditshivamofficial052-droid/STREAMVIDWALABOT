@@ -24,7 +24,7 @@ class StreamBot(Client):
         self.settings = self.db.settings
         self.users = self.db.users
         self.public_url = Config.FQDN.rstrip('/')
-        self.chunk_size = 1048576 # Strict 1MB Chunk limit for Telegram API
+        self.chunk_size = 1048576 
 
     async def get_db_settings(self):
         data = await self.settings.find_one({"id": "config"})
@@ -60,10 +60,30 @@ class StreamBot(Client):
         app = web.Application()
         app.router.add_get("/", lambda r: web.Response(text="Bot Active"))
         app.router.add_get("/stream/{msg_id}", self.stream_handler)
+        app.router.add_get("/download/{msg_id}", self.stream_handler) # Native download route
         app.router.add_get("/watch/{msg_id}", self.watch_handler)
+        app.router.add_get("/thumb/{msg_id}", self.thumb_handler) # Thumbnail route
         runner = web.AppRunner(app)
         await runner.setup()
         await web.TCPSite(runner, Config.BIND_ADRESS, Config.PORT).start()
+
+    async def thumb_handler(self, request):
+        try:
+            msg_id = int(request.match_info['msg_id'])
+            file_msg = await self.get_messages(Config.BIN_CHANNEL, msg_id)
+            if not file_msg:
+                return web.Response(status=404)
+
+            file = file_msg.document or file_msg.video or file_msg.audio
+            if not file or not getattr(file, 'thumbs', None):
+                return web.Response(status=404)
+
+            thumb = file.thumbs[0]
+            thumb_data = await self.download_media(thumb.file_id, in_memory=True)
+            return web.Response(body=thumb_data.getvalue(), content_type="image/jpeg")
+        except Exception as e:
+            logger.error(f"Thumbnail error: {e}")
+            return web.Response(status=404)
 
     async def watch_handler(self, request):
         try:
@@ -77,11 +97,14 @@ class StreamBot(Client):
                 return web.Response(text="Invalid file type", status=400)
 
             stream_url = f"{self.public_url}/stream/{msg_id}"
+            download_url = f"{self.public_url}/download/{msg_id}"
+            thumb_url = f"{self.public_url}/thumb/{msg_id}"
             file_name = getattr(file, 'file_name', None) or f"File_{msg_id}"
             mime_type = getattr(file, 'mime_type', None) or "video/mp4"
 
-            # Inject variables into HTML template
             html_content = tv_template_sheffy_samra.replace("[[STREAM_URL]]", stream_url)
+            html_content = html_content.replace("[[DOWNLOAD_URL]]", download_url)
+            html_content = html_content.replace("[[THUMB_URL]]", thumb_url)
             html_content = html_content.replace("[[FILE_NAME]]", file_name)
             html_content = html_content.replace("[[MIME_TYPE]]", mime_type)
 
@@ -106,9 +129,13 @@ class StreamBot(Client):
             file_name = getattr(file, 'file_name', None) or f"File_{msg_id}"
             mime_type = getattr(file, 'mime_type', None) or "application/octet-stream"
 
+            # Check if this request came to /download/ route to enforce forced-download
+            is_download = "download" in request.path
+            disposition = "attachment" if is_download else "inline"
+
             headers = {
                 "Content-Type": mime_type,
-                "Content-Disposition": f'inline; filename="{file_name}"',
+                "Content-Disposition": f'{disposition}; filename="{file_name}"',
                 "Accept-Ranges": "bytes",
             }
             
@@ -126,7 +153,6 @@ class StreamBot(Client):
                 response = web.StreamResponse(status=206, headers=headers)
                 await response.prepare(request)
                 
-                # Chunk index logic fixed here to prevent OFFSET_INVALID
                 offset_chunk = start // self.chunk_size
                 skip_bytes = start % self.chunk_size
                 
@@ -149,7 +175,6 @@ class StreamBot(Client):
                             break
                             
                 except Exception as e:
-                    # Ignore standard disconnect exceptions
                     if "closing transport" in str(e).lower() or "connection reset" in str(e).lower() or "broken pipe" in str(e).lower():
                         pass
                     else:
@@ -231,7 +256,8 @@ async def handle_file(c: StreamBot, m: Message):
 
     bin_msg = await m.forward(Config.BIN_CHANNEL)
     
-    stream_url = f"{c.public_url}/stream/{bin_msg.id}"
+    # Generate respective URLs
+    download_url = f"{c.public_url}/download/{bin_msg.id}"
     watch_url = f"{c.public_url}/watch/{bin_msg.id}"
     
     final_links = []
@@ -246,9 +272,9 @@ async def handle_file(c: StreamBot, m: Message):
     
     if not final_links:
         final_links.append(f"📺 <b>Watch Link:</b> <code>{watch_url}</code>")
-        final_links.append(f"📥 <b>Download Link:</b> <code>{stream_url}</code>")
+        final_links.append(f"📥 <b>Download Link:</b> <code>{download_url}</code>")
         buttons.append([InlineKeyboardButton("▶️ Watch Online", url=watch_url)])
-        buttons.append([InlineKeyboardButton("📥 Fast Download", url=stream_url)])
+        buttons.append([InlineKeyboardButton("📥 Fast Download", url=download_url)])
 
     text = "<blockquote>✅ <b>Your Links are Ready!</b>\n\n" + "\n".join(final_links) + "</blockquote>"
     await m.reply_text(text, reply_markup=InlineKeyboardMarkup(buttons), quote=True, parse_mode=enums.ParseMode.HTML)
