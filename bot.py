@@ -96,28 +96,45 @@ class StreamBot(Client):
             file = file_msg.document or file_msg.video or file_msg.audio
             
             range_header = request.headers.get("Range")
-            offset = int(range_header.replace("bytes=", "").split("-")[0]) if range_header else 0
+            req_offset = int(range_header.replace("bytes=", "").split("-")[0]) if range_header else 0
+            
+            # Telegram strict 1MB chunk alignment math (Fixes 400 OFFSET_INVALID)
+            chunk_size = 1048576 
+            aligned_offset = req_offset - (req_offset % chunk_size)
+            skip_bytes = req_offset - aligned_offset
+
             file_name = getattr(file, 'file_name', None) or f"File_{msg_id}"
 
-            # Changed attachment to inline to prevent forced downloads inside the HTML player
             res = web.StreamResponse(status=206 if range_header else 200, headers={
                 "Content-Type": file.mime_type or "application/octet-stream",
                 "Content-Disposition": f'inline; filename="{file_name}"',
                 "Accept-Ranges": "bytes",
-                "Content-Length": str(file.file_size - offset),
-                "Content-Range": f"bytes {offset}-{file.file_size-1}/{file.file_size}"
+                "Content-Length": str(file.file_size - req_offset),
+                "Content-Range": f"bytes {req_offset}-{file.file_size-1}/{file.file_size}"
             })
             await res.prepare(request)
-            async for chunk in self.stream_media(file, offset=offset):
-                await res.write(chunk)
-            return res
+            
+            try:
+                first_chunk = True
+                async for chunk in self.stream_media(file, offset=aligned_offset):
+                    if first_chunk:
+                        chunk = chunk[skip_bytes:]
+                        first_chunk = False
+                    if not chunk:
+                        continue
+                    await res.write(chunk)
+                return res
+            except Exception as e:
+                # Silent client disconnects
+                if "closing transport" in str(e).lower() or "connection reset" in str(e).lower():
+                    pass 
+                else:
+                    logger.error(f"Streaming error: {e}")
+                return web.Response(status=499)
+                
         except Exception as e: 
-            # Silent the expected player disconnect errors to keep logs clean
-            if "closing transport" in str(e).lower() or "connection reset" in str(e).lower():
-                pass 
-            else:
-                logger.error(f"Streaming error: {e}")
-            return web.Response(status=499)
+            logger.error(f"Stream handler setup error: {e}")
+            return web.HTTPInternalServerError()
 
 bot = StreamBot()
 
@@ -158,7 +175,6 @@ async def start_msg(c, m: Message):
 async def handle_file(c: StreamBot, m: Message):
     db = await c.get_db_settings()
     
-    # FSub validation logic
     if db['fsub'] and Config.FORCE_SUB_CHANNEL:
         try:
             await c.get_chat_member(Config.FORCE_SUB_CHANNEL, m.from_user.id)
@@ -174,14 +190,12 @@ async def handle_file(c: StreamBot, m: Message):
 
     bin_msg = await m.forward(Config.BIN_CHANNEL)
     
-    # Generate both Raw Stream and HTML Watch URLs
     stream_url = f"{c.public_url}/stream/{bin_msg.id}"
     watch_url = f"{c.public_url}/watch/{bin_msg.id}"
     
     final_links = []
     buttons = []
     
-    # Multi-Shortener Link Iteration (Applies to Watch URL for streaming)
     for i in range(1, 5):
         sh = db[f'sh{i}']
         if sh['status'] and sh['domain'] and sh['api']:
