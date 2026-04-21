@@ -22,7 +22,7 @@ class StreamBot(Client):
         self.db = self.db_client.get_database("StreamBot")
         self.settings = self.db.settings
         self.users = self.db.users
-        self.public_url = Config.FQDN.rstrip('/') # Will update in start() if empty
+        self.public_url = None # start() event me auto-detect hoga
 
     async def get_db_settings(self):
         data = await self.settings.find_one({"id": "config"})
@@ -49,21 +49,46 @@ class StreamBot(Client):
             logger.error(f"Shortener Error: {e}")
             return url
 
+    async def auto_detect_url(self):
+        # 1. Custom FQDN priority check
+        if Config.FQDN:
+            logger.info("Using custom FQDN.")
+            return Config.FQDN.rstrip('/')
+        
+        # 2. Render Auto-Detect
+        render_url = os.environ.get("RENDER_EXTERNAL_URL")
+        if render_url:
+            logger.info("Render platform detected.")
+            return render_url.rstrip('/')
+            
+        # 3. Koyeb Auto-Detect
+        koyeb_domain = os.environ.get("KOYEB_PUBLIC_DOMAIN")
+        if koyeb_domain:
+            logger.info("Koyeb platform detected.")
+            return f"https://{koyeb_domain}".rstrip('/')
+            
+        # 4. Heroku Auto-Detect (Requires HEROKU_APP_NAME in env vars)
+        heroku_app = os.environ.get("HEROKU_APP_NAME")
+        if heroku_app:
+            logger.info("Heroku platform detected.")
+            return f"https://{heroku_app}.herokuapp.com"
+            
+        # 5. VPS/Local IP Fallback detection
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get("https://api.ipify.org?format=text") as resp:
+                    ip = await resp.text()
+                    logger.info(f"VPS/Local IP auto-detected: {ip}")
+                    return f"http://{ip}:{Config.PORT}"
+        except Exception as e:
+            logger.error(f"Failed to fetch IP: {e}")
+            return f"http://127.0.0.1:{Config.PORT}" # Localhost fallback
+
     async def start(self):
         await super().start()
         
-        # Auto-Detect System Public IP if FQDN is not provided
-        if not self.public_url:
-            try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.get("https://api.ipify.org?format=text") as resp:
-                        ip = await resp.text()
-                        self.public_url = f"http://{ip}:{Config.PORT}"
-                        logger.info(f"Auto-Detected System IP: {ip}")
-            except Exception as e:
-                logger.error(f"Failed to fetch IP: {e}")
-                self.public_url = f"http://127.0.0.1:{Config.PORT}" # Fallback to localhost
-
+        # Server URL auto-detection trigger karna
+        self.public_url = await self.auto_detect_url()
         logger.info(f"Bot & Stream Server starting... Links will use: {self.public_url}")
         
         # Web Server Setup
@@ -100,12 +125,11 @@ class StreamBot(Client):
 
 bot = StreamBot()
 
-# Admin Control Handlers
 @bot.on_message(filters.command(["setfsub", "setsh1st", "setsh2nd", "setsh3rd", "setsh4th"]) & filters.user(Config.OWNER_ID))
 async def toggle_settings(c, m: Message):
     cmd = m.command[0]
     state = m.command[1].lower() == "on" if len(m.command) > 1 else False
-    key = "fsub" if cmd == "setfsub" else f"sh{cmd[5:6]}" # Extract sh1, sh2 etc
+    key = "fsub" if cmd == "setfsub" else f"sh{cmd[5:6]}"
     
     if key == "fsub":
         await c.settings.update_one({"id": "config"}, {"$set": {"fsub": state}})
@@ -129,7 +153,7 @@ async def start_msg(c, m: Message):
         await c.users.insert_one({"user_id": m.from_user.id, "name": m.from_user.first_name})
     
     await m.reply_text(
-        f"👋 **Hi {m.from_user.first_name}!**\n\nMain ek high-speed File Stream bot hoon. Bas mujhe koi bhi file bhejo aur main uska instant streaming aur download link generate kar dunga.",
+        f"👋 **Hi {m.from_user.first_name}!**\n\nI am a high-speed File Stream bot. Just send me any file and I will generate an instant streaming and download link for it.",
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Updates Channel", url=f"https://t.me/{Config.FORCE_SUB_CHANNEL}")]])
     )
 
@@ -137,29 +161,26 @@ async def start_msg(c, m: Message):
 async def handle_file(c: StreamBot, m: Message):
     db = await c.get_db_settings()
     
-    # Force Sub Check
+    # FSub check karna file processing se pehle
     if db['fsub'] and Config.FORCE_SUB_CHANNEL:
         try:
             await c.get_chat_member(Config.FORCE_SUB_CHANNEL, m.from_user.id)
         except errors.UserNotParticipant:
             invite_link = (await c.get_chat(Config.FORCE_SUB_CHANNEL)).invite_link
             return await m.reply(
-                "❌ **Join Channel First!**\n\nAapko file stream karne ke liye pehle channel join karna hoga.",
+                "❌ **Join Channel First!**\n\nYou must join the channel first to stream files.",
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Join Now", url=invite_link or f"https://t.me/{Config.FORCE_SUB_CHANNEL}")]])
             )
         except Exception as e:
             logger.error(f"Fsub Error: {e}")
 
-    # Forward to Bin Channel
     bin_msg = await m.forward(Config.BIN_CHANNEL)
-    
-    # Using the auto-detected public IP or predefined FQDN
     stream_url = f"{c.public_url}/stream/{bin_msg.id}"
     
     final_links = []
     buttons = []
     
-    # Multi-Shortener Link Generation
+    # Multi-Shortener Link Generation process
     for i in range(1, 5):
         sh = db[f'sh{i}']
         if sh['status'] and sh['domain'] and sh['api']:
