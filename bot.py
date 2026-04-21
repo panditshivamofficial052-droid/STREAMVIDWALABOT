@@ -6,6 +6,7 @@ from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from motor.motor_asyncio import AsyncIOMotorClient
 from aiohttp import web
 from config import Config
+from tv_template_sheffy_samra import tv_template_sheffy_samra
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -58,9 +59,35 @@ class StreamBot(Client):
         app = web.Application()
         app.router.add_get("/", lambda r: web.Response(text="Bot Active"))
         app.router.add_get("/stream/{msg_id}", self.stream_handler)
+        app.router.add_get("/watch/{msg_id}", self.watch_handler)
         runner = web.AppRunner(app)
         await runner.setup()
         await web.TCPSite(runner, Config.BIND_ADRESS, Config.PORT).start()
+
+    async def watch_handler(self, request):
+        try:
+            msg_id = int(request.match_info['msg_id'])
+            file_msg = await self.get_messages(Config.BIN_CHANNEL, msg_id)
+            if not file_msg:
+                return web.Response(text="File not found", status=404)
+            
+            file = file_msg.document or file_msg.video or file_msg.audio
+            if not file:
+                return web.Response(text="Invalid file type", status=400)
+
+            stream_url = f"{self.public_url}/stream/{msg_id}"
+            file_name = getattr(file, 'file_name', None) or f"File_{msg_id}"
+            mime_type = getattr(file, 'mime_type', None) or "video/mp4"
+
+            # Parse and inject data into HTML template
+            html_content = tv_template_sheffy_samra.replace("[[STREAM_URL]]", stream_url)
+            html_content = html_content.replace("[[FILE_NAME]]", file_name)
+            html_content = html_content.replace("[[MIME_TYPE]]", mime_type)
+
+            return web.Response(text=html_content, content_type='text/html')
+        except Exception as e:
+            logger.error(f"Watch handler error: {e}")
+            return web.HTTPInternalServerError()
 
     async def stream_handler(self, request):
         try:
@@ -70,10 +97,12 @@ class StreamBot(Client):
             
             range_header = request.headers.get("Range")
             offset = int(range_header.replace("bytes=", "").split("-")[0]) if range_header else 0
+            file_name = getattr(file, 'file_name', None) or f"File_{msg_id}"
 
+            # Changed attachment to inline to prevent forced downloads inside the HTML player
             res = web.StreamResponse(status=206 if range_header else 200, headers={
                 "Content-Type": file.mime_type or "application/octet-stream",
-                "Content-Disposition": f'attachment; filename="{file.file_name}"',
+                "Content-Disposition": f'inline; filename="{file_name}"',
                 "Accept-Ranges": "bytes",
                 "Content-Length": str(file.file_size - offset),
                 "Content-Range": f"bytes {offset}-{file.file_size-1}/{file.file_size}"
@@ -83,8 +112,12 @@ class StreamBot(Client):
                 await res.write(chunk)
             return res
         except Exception as e: 
-            logger.error(f"Streaming error: {e}")
-            return web.HTTPInternalServerError()
+            # Silent the expected player disconnect errors to keep logs clean
+            if "closing transport" in str(e).lower() or "connection reset" in str(e).lower():
+                pass 
+            else:
+                logger.error(f"Streaming error: {e}")
+            return web.Response(status=499)
 
 bot = StreamBot()
 
@@ -140,22 +173,27 @@ async def handle_file(c: StreamBot, m: Message):
             logger.error(f"Fsub Error: {e}")
 
     bin_msg = await m.forward(Config.BIN_CHANNEL)
+    
+    # Generate both Raw Stream and HTML Watch URLs
     stream_url = f"{c.public_url}/stream/{bin_msg.id}"
+    watch_url = f"{c.public_url}/watch/{bin_msg.id}"
     
     final_links = []
     buttons = []
     
-    # Multi-Shortener Link Iteration
+    # Multi-Shortener Link Iteration (Applies to Watch URL for streaming)
     for i in range(1, 5):
         sh = db[f'sh{i}']
         if sh['status'] and sh['domain'] and sh['api']:
-            short = await c.get_shortlink(stream_url, sh['domain'], sh['api'])
+            short = await c.get_shortlink(watch_url, sh['domain'], sh['api'])
             final_links.append(f"🔗 <b>Link {i}:</b> <code>{short}</code>")
-            buttons.append([InlineKeyboardButton(f"Stream/Download {i}", url=short)])
+            buttons.append([InlineKeyboardButton(f"▶️ Watch {i}", url=short)])
     
     if not final_links:
-        final_links.append(f"🔗 <b>Direct Link:</b> <code>{stream_url}</code>")
-        buttons.append([InlineKeyboardButton("Direct Stream", url=stream_url)])
+        final_links.append(f"📺 <b>Watch Link:</b> <code>{watch_url}</code>")
+        final_links.append(f"📥 <b>Download Link:</b> <code>{stream_url}</code>")
+        buttons.append([InlineKeyboardButton("▶️ Watch Online", url=watch_url)])
+        buttons.append([InlineKeyboardButton("📥 Fast Download", url=stream_url)])
 
     text = "<blockquote>✅ <b>Your Links are Ready!</b>\n\n" + "\n".join(final_links) + "</blockquote>"
     await m.reply_text(text, reply_markup=InlineKeyboardMarkup(buttons), quote=True, parse_mode=enums.ParseMode.HTML)
