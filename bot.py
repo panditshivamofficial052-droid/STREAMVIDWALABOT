@@ -1,5 +1,8 @@
 import os
+import time
+import shutil
 import logging
+import psutil
 import aiohttp
 from pyrogram import Client, filters, errors, enums
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
@@ -10,6 +13,28 @@ from tv_template_sheffy_samra import tv_template_sheffy_samra
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+START_TIME = time.time()
+
+def get_readable_time(seconds: int) -> str:
+    count = 0
+    ping_time = ""
+    time_list = []
+    time_suffix_list = ["s", "m", "h", "days"]
+    while count < 4:
+        count += 1
+        remainder, result = divmod(seconds, 60) if count < 3 else divmod(seconds, 24)
+        if seconds == 0 and remainder == 0:
+            break
+        time_list.append(int(result))
+        seconds = int(remainder)
+    for x in range(len(time_list)):
+        time_list[x] = str(time_list[x]) + time_suffix_list[x]
+    if len(time_list) == 4:
+        ping_time += time_list.pop() + ", "
+    time_list.reverse()
+    ping_time += ":".join(time_list)
+    return ping_time
 
 class StreamBot(Client):
     def __init__(self):
@@ -53,7 +78,6 @@ class StreamBot(Client):
 
     async def start(self):
         await super().start()
-        
         logger.info(f"Bot & Stream Server starting... Links will use: {self.public_url}")
         
         # Web Server Setup
@@ -129,7 +153,6 @@ class StreamBot(Client):
             file_name = getattr(file, 'file_name', None) or f"File_{msg_id}"
             mime_type = getattr(file, 'mime_type', None) or "application/octet-stream"
 
-            # Check if this request came to /download/ route to enforce forced-download
             is_download = "download" in request.path
             disposition = "attachment" if is_download else "inline"
 
@@ -208,12 +231,16 @@ bot = StreamBot()
 async def toggle_settings(c, m: Message):
     cmd = m.command[0]
     state = m.command[1].lower() == "on" if len(m.command) > 1 else False
-    key = "fsub" if cmd == "setfsub" else f"sh{cmd[5:6]}"
     
-    if key == "fsub":
+    if cmd == "setfsub":
+        key = "fsub"
         await c.settings.update_one({"id": "config"}, {"$set": {"fsub": state}})
     else:
+        # e.g. cmd = "setsh1st" -> key = "sh1"
+        num = cmd[5:6] 
+        key = f"sh{num}"
         await c.settings.update_one({"id": "config"}, {"$set": {f"{key}.status": state}})
+        
     await m.reply(f"✅ <b>{key.upper()}</b> set to <b>{'ON' if state else 'OFF'}</b>", parse_mode=enums.ParseMode.HTML)
 
 @bot.on_message(filters.command(["1stdomain", "2nddomain", "3rddomain", "4thdomain", "1stapi", "2ndapi", "3rdapi", "4thapi"]) & filters.user(Config.OWNER_ID))
@@ -221,19 +248,60 @@ async def update_configs(c, m: Message):
     if len(m.command) < 2: return await m.reply("Usage: /command <value>")
     cmd = m.command[0]
     val = m.command[1]
-    num = cmd[0]
+    num = cmd[0] # gets '1', '2', '3', or '4'
     field = "domain" if "domain" in cmd else "api"
+    
     await c.settings.update_one({"id": "config"}, {"$set": {f"sh{num}.{field}": val}})
     await m.reply(f"✅ Updated Shortener <b>{num}</b> <b>{field}</b>", parse_mode=enums.ParseMode.HTML)
+
+@bot.on_message(filters.command("smdetails") & filters.user(Config.OWNER_ID))
+async def smdetails_cmd(c: StreamBot, m: Message):
+    db = await c.get_db_settings()
+    total_users = await c.users.count_documents({})
+    
+    # System Stats calculation
+    total, used, free = shutil.disk_usage("/")
+    ram = psutil.virtual_memory()
+    cpu = psutil.cpu_percent(interval=0.5)
+    uptime_str = get_readable_time(int(time.time() - START_TIME))
+    
+    text = f"⚙️ **System Details & Bot Stats**\n\n"
+    text += f"👥 **Total Users:** `{total_users}`\n"
+    text += f"⏱ **Uptime:** `{uptime_str}`\n"
+    text += f"💻 **CPU Usage:** `{cpu}%`\n"
+    text += f"💾 **RAM Usage:** `{ram.percent}%`\n"
+    text += f"💿 **Storage Free:** `{free // (2**30)} GB / {total // (2**30)} GB`\n\n"
+    
+    text += f"🔗 **Shorteners Status:**\n"
+    for i in range(1, 5):
+        sh = db[f'sh{i}']
+        status = "✅ ON" if sh['status'] else "❌ OFF"
+        text += f"**Shortener {i}:** {status}\n"
+        text += f" ├ Domain: `{sh['domain'] or 'Not Set'}`\n"
+        text += f" └ API: `{sh['api'] or 'Not Set'}`\n\n"
+        
+    await m.reply(text)
 
 @bot.on_message(filters.command("start") & filters.private)
 async def start_msg(c, m: Message):
     if not await c.users.find_one({"user_id": m.from_user.id}):
         await c.users.insert_one({"user_id": m.from_user.id, "name": m.from_user.first_name})
     
+    # Updated generic welcoming text for all users
+    text = (
+        f"<blockquote>👋 <b>Hello {m.from_user.first_name}! Welcome to the Ultimate Stream Bot!</b>\n\n"
+        f"I can convert your Telegram files into high-speed streaming and download links instantly.\n\n"
+        f"🎯 <b>How to use me?</b>\n"
+        f"Just send or forward me any video, audio, or document file, and I will generate your personalized links!</blockquote>"
+    )
+    
+    buttons = []
+    if Config.FORCE_SUB_CHANNEL:
+        buttons.append([InlineKeyboardButton("📢 Join Updates Channel", url=f"https://t.me/{Config.FORCE_SUB_CHANNEL}")])
+        
     await m.reply_text(
-        f"<blockquote>👋 <b>Hi {m.from_user.first_name}!</b>\n\nI am a high-speed File Stream bot. Just send me any file and I will generate an instant streaming and download link for it.</blockquote>",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Updates Channel", url=f"https://t.me/{Config.FORCE_SUB_CHANNEL}")]]),
+        text,
+        reply_markup=InlineKeyboardMarkup(buttons) if buttons else None,
         parse_mode=enums.ParseMode.HTML
     )
 
@@ -247,37 +315,60 @@ async def handle_file(c: StreamBot, m: Message):
         except errors.UserNotParticipant:
             invite_link = (await c.get_chat(Config.FORCE_SUB_CHANNEL)).invite_link
             return await m.reply(
-                "<blockquote>❌ <b>Join Channel First!</b>\n\nYou must join the channel first to stream files.</blockquote>",
+                "<blockquote>❌ <b>Join Channel First!</b>\n\nYou must join our channel to use this bot for streaming.</blockquote>",
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Join Now", url=invite_link or f"https://t.me/{Config.FORCE_SUB_CHANNEL}")]]),
                 parse_mode=enums.ParseMode.HTML
             )
         except Exception as e:
             logger.error(f"Fsub Error: {e}")
 
+    processing_msg = await m.reply("<i>Processing your file...</i>", parse_mode=enums.ParseMode.HTML)
+
     bin_msg = await m.forward(Config.BIN_CHANNEL)
     
-    # Generate respective URLs
-    download_url = f"{c.public_url}/download/{bin_msg.id}"
     watch_url = f"{c.public_url}/watch/{bin_msg.id}"
+    download_url = f"{c.public_url}/download/{bin_msg.id}"
     
-    final_links = []
+    file = m.document or m.video or m.audio
+    file_name = getattr(file, 'file_name', None) or f"File_{bin_msg.id}"
+    
+    # Start building the response text
+    text = f"<blockquote>📁 <b>File Name:</b> <code>{file_name}</code>\n\n"
+    text += f"👇 <b>Tap on links to copy</b> 👇\n\n"
+    
     buttons = []
+    shorteners_used = False
     
+    # Process the 4 shorteners dynamically
     for i in range(1, 5):
         sh = db[f'sh{i}']
         if sh['status'] and sh['domain'] and sh['api']:
+            shorteners_used = True
             short = await c.get_shortlink(watch_url, sh['domain'], sh['api'])
-            final_links.append(f"🔗 <b>Link {i}:</b> <code>{short}</code>")
-            buttons.append([InlineKeyboardButton(f"▶️ Watch {i}", url=short)])
-    
-    if not final_links:
-        final_links.append(f"📺 <b>Watch Link:</b> <code>{watch_url}</code>")
-        final_links.append(f"📥 <b>Download Link:</b> <code>{download_url}</code>")
+            domain_name = sh['domain']
+            
+            # Post me File name + Short link
+            text += f"🌐 <b>{domain_name}:</b>\n👉 <code>{short}</code>\n\n"
+            
+            # Button to directly share/copy that specific link via Telegram's share dialog
+            buttons.append([InlineKeyboardButton(f"🔗 Share/Copy {domain_name}", url=f"https://t.me/share/url?url={short}")])
+            
+    # Fallback if no shorteners are active
+    if not shorteners_used:
+        text += f"📺 <b>Watch Link:</b>\n👉 <code>{watch_url}</code>\n\n"
+        text += f"📥 <b>Download Link:</b>\n👉 <code>{download_url}</code>\n"
         buttons.append([InlineKeyboardButton("▶️ Watch Online", url=watch_url)])
         buttons.append([InlineKeyboardButton("📥 Fast Download", url=download_url)])
 
-    text = "<blockquote>✅ <b>Your Links are Ready!</b>\n\n" + "\n".join(final_links) + "</blockquote>"
-    await m.reply_text(text, reply_markup=InlineKeyboardMarkup(buttons), quote=True, parse_mode=enums.ParseMode.HTML)
+    text += "</blockquote>"
+    
+    await processing_msg.delete()
+    await m.reply_text(
+        text, 
+        reply_markup=InlineKeyboardMarkup(buttons), 
+        quote=True, 
+        parse_mode=enums.ParseMode.HTML
+    )
 
 if __name__ == "__main__":
     bot.run()
