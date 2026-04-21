@@ -16,6 +16,9 @@ logger = logging.getLogger(__name__)
 
 START_TIME = time.time()
 
+# Dictionary to track admin conversation states
+admin_states = {}
+
 def get_readable_time(seconds: int) -> str:
     count = 0
     ping_time = ""
@@ -84,9 +87,9 @@ class StreamBot(Client):
         app = web.Application()
         app.router.add_get("/", lambda r: web.Response(text="Bot Active"))
         app.router.add_get("/stream/{msg_id}", self.stream_handler)
-        app.router.add_get("/download/{msg_id}", self.stream_handler) # Native download route
+        app.router.add_get("/download/{msg_id}", self.stream_handler)
         app.router.add_get("/watch/{msg_id}", self.watch_handler)
-        app.router.add_get("/thumb/{msg_id}", self.thumb_handler) # Thumbnail route
+        app.router.add_get("/thumb/{msg_id}", self.thumb_handler)
         runner = web.AppRunner(app)
         await runner.setup()
         await web.TCPSite(runner, Config.BIND_ADRESS, Config.PORT).start()
@@ -227,67 +230,87 @@ class StreamBot(Client):
 
 bot = StreamBot()
 
-@bot.on_message(filters.command(["setfsub", "setsh1st", "setsh2nd", "setsh3rd", "setsh4th"]) & filters.user(Config.OWNER_ID))
-async def toggle_settings(c, m: Message):
-    cmd = m.command[0]
+@bot.on_message(filters.command(["setfsub"]) & filters.user(Config.OWNER_ID))
+async def toggle_fsub(c, m: Message):
     state = m.command[1].lower() == "on" if len(m.command) > 1 else False
-    
-    if cmd == "setfsub":
-        key = "fsub"
-        await c.settings.update_one({"id": "config"}, {"$set": {"fsub": state}})
-    else:
-        # e.g. cmd = "setsh1st" -> key = "sh1"
-        num = cmd[5:6] 
-        key = f"sh{num}"
-        await c.settings.update_one({"id": "config"}, {"$set": {f"{key}.status": state}})
-        
-    await m.reply(f"✅ <b>{key.upper()}</b> set to <b>{'ON' if state else 'OFF'}</b>", parse_mode=enums.ParseMode.HTML)
+    await c.settings.update_one({"id": "config"}, {"$set": {"fsub": state}})
+    await m.reply(f"✅ <b>FSUB</b> set to <b>{'ON' if state else 'OFF'}</b>", parse_mode=enums.ParseMode.HTML)
 
-@bot.on_message(filters.command(["1stdomain", "2nddomain", "3rddomain", "4thdomain", "1stapi", "2ndapi", "3rdapi", "4thapi"]) & filters.user(Config.OWNER_ID))
-async def update_configs(c, m: Message):
-    if len(m.command) < 2: return await m.reply("Usage: /command <value>")
-    cmd = m.command[0]
-    val = m.command[1]
-    num = cmd[0] # gets '1', '2', '3', or '4'
-    field = "domain" if "domain" in cmd else "api"
+# Setup Shorteners with Conversation Logic
+@bot.on_message(filters.command(["setsh1st", "setsh2nd", "setsh3rd", "setsh4th"]) & filters.user(Config.OWNER_ID))
+async def setup_shorteners(c, m: Message):
+    cmd = m.command[0].lower()
+    num = cmd[5:6] # Gets '1', '2', '3', or '4'
     
-    await c.settings.update_one({"id": "config"}, {"$set": {f"sh{num}.{field}": val}})
-    await m.reply(f"✅ Updated Shortener <b>{num}</b> <b>{field}</b>", parse_mode=enums.ParseMode.HTML)
+    if len(m.command) < 2:
+        return await m.reply(f"<b>Usage:</b> <code>/{cmd} on</code> or <code>/{cmd} off</code>", parse_mode=enums.ParseMode.HTML)
+        
+    state = m.command[1].lower()
+    
+    if state == "off":
+        await c.settings.update_one({"id": "config"}, {"$set": {f"sh{num}.status": False}})
+        if m.from_user.id in admin_states:
+            del admin_states[m.from_user.id]
+        await m.reply(f"✅ <b>Shortener {num}</b> has been turned <b>OFF</b>.", parse_mode=enums.ParseMode.HTML)
+        
+    elif state == "on":
+        admin_states[m.from_user.id] = {"step": "domain", "num": num}
+        await m.reply(f"🟢 <b>Setting up Shortener {num}</b>\n\n👉 Please send the <b>DOMAIN NAME</b> (e.g., <code>shareus.io</code>):", parse_mode=enums.ParseMode.HTML)
+
+# Conversation State Listener
+@bot.on_message(filters.private & filters.text & filters.user(Config.OWNER_ID) & ~filters.command(["start", "smdetails", "setfsub", "setsh1st", "setsh2nd", "setsh3rd", "setsh4th"]))
+async def state_handler(c, m: Message):
+    user_id = m.from_user.id
+    
+    if user_id in admin_states:
+        state_info = admin_states[user_id]
+        num = state_info["num"]
+        step = state_info["step"]
+        
+        if step == "domain":
+            domain = m.text.strip()
+            await c.settings.update_one({"id": "config"}, {"$set": {f"sh{num}.domain": domain}})
+            admin_states[user_id]["step"] = "api"
+            await m.reply(f"✅ <b>Domain saved:</b> <code>{domain}</code>\n\n👉 Now, please send the <b>API KEY</b>:", parse_mode=enums.ParseMode.HTML)
+        
+        elif step == "api":
+            api = m.text.strip()
+            await c.settings.update_one({"id": "config"}, {"$set": {f"sh{num}.api": api, f"sh{num}.status": True}})
+            del admin_states[user_id]
+            await m.reply(f"🎉 <b>Success!</b>\n\n✅ <b>API saved.</b>\n🟢 <b>Shortener {num} is now completely configured and turned ON!</b>", parse_mode=enums.ParseMode.HTML)
 
 @bot.on_message(filters.command("smdetails") & filters.user(Config.OWNER_ID))
 async def smdetails_cmd(c: StreamBot, m: Message):
     db = await c.get_db_settings()
     total_users = await c.users.count_documents({})
     
-    # System Stats calculation
     total, used, free = shutil.disk_usage("/")
     ram = psutil.virtual_memory()
     cpu = psutil.cpu_percent(interval=0.5)
     uptime_str = get_readable_time(int(time.time() - START_TIME))
     
-    text = f"⚙️ **System Details & Bot Stats**\n\n"
-    text += f"👥 **Total Users:** `{total_users}`\n"
-    text += f"⏱ **Uptime:** `{uptime_str}`\n"
-    text += f"💻 **CPU Usage:** `{cpu}%`\n"
-    text += f"💾 **RAM Usage:** `{ram.percent}%`\n"
-    text += f"💿 **Storage Free:** `{free // (2**30)} GB / {total // (2**30)} GB`\n\n"
+    text = f"⚙️ <b>System Details & Bot Stats</b>\n\n"
+    text += f"👥 <b>Total Users:</b> <code>{total_users}</code>\n"
+    text += f"⏱ <b>Uptime:</b> <code>{uptime_str}</code>\n"
+    text += f"💻 <b>CPU Usage:</b> <code>{cpu}%</code>\n"
+    text += f"💾 <b>RAM Usage:</b> <code>{ram.percent}%</code>\n"
+    text += f"💿 <b>Storage Free:</b> <code>{free // (2**30)} GB / {total // (2**30)} GB</code>\n\n"
     
-    text += f"🔗 **Shorteners Status:**\n"
+    text += f"🔗 <b>Shorteners Status:</b>\n\n"
     for i in range(1, 5):
         sh = db[f'sh{i}']
-        status = "✅ ON" if sh['status'] else "❌ OFF"
-        text += f"**Shortener {i}:** {status}\n"
-        text += f" ├ Domain: `{sh['domain'] or 'Not Set'}`\n"
-        text += f" └ API: `{sh['api'] or 'Not Set'}`\n\n"
+        status = "✅ <b>ON</b>" if sh['status'] else "❌ <b>OFF</b>"
+        text += f"<b>Shortener {i}:</b> {status}\n"
+        text += f" ├ <b>Domain:</b> <code>{sh['domain'] or 'Not Set'}</code>\n"
+        text += f" └ <b>API:</b> <code>{sh['api'] or 'Not Set'}</code>\n\n"
         
-    await m.reply(text)
+    await m.reply(text, parse_mode=enums.ParseMode.HTML)
 
 @bot.on_message(filters.command("start") & filters.private)
 async def start_msg(c, m: Message):
     if not await c.users.find_one({"user_id": m.from_user.id}):
         await c.users.insert_one({"user_id": m.from_user.id, "name": m.from_user.first_name})
     
-    # Updated generic welcoming text for all users
     text = (
         f"<blockquote>👋 <b>Hello {m.from_user.first_name}! Welcome to the Ultimate Stream Bot!</b>\n\n"
         f"I can convert your Telegram files into high-speed streaming and download links instantly.\n\n"
@@ -332,14 +355,12 @@ async def handle_file(c: StreamBot, m: Message):
     file = m.document or m.video or m.audio
     file_name = getattr(file, 'file_name', None) or f"File_{bin_msg.id}"
     
-    # Start building the response text
     text = f"<blockquote>📁 <b>File Name:</b> <code>{file_name}</code>\n\n"
     text += f"👇 <b>Tap on links to copy</b> 👇\n\n"
     
     buttons = []
     shorteners_used = False
     
-    # Process the 4 shorteners dynamically
     for i in range(1, 5):
         sh = db[f'sh{i}']
         if sh['status'] and sh['domain'] and sh['api']:
@@ -347,13 +368,9 @@ async def handle_file(c: StreamBot, m: Message):
             short = await c.get_shortlink(watch_url, sh['domain'], sh['api'])
             domain_name = sh['domain']
             
-            # Post me File name + Short link
             text += f"🌐 <b>{domain_name}:</b>\n👉 <code>{short}</code>\n\n"
-            
-            # Button to directly share/copy that specific link via Telegram's share dialog
             buttons.append([InlineKeyboardButton(f"🔗 Share/Copy {domain_name}", url=f"https://t.me/share/url?url={short}")])
             
-    # Fallback if no shorteners are active
     if not shorteners_used:
         text += f"📺 <b>Watch Link:</b>\n👉 <code>{watch_url}</code>\n\n"
         text += f"📥 <b>Download Link:</b>\n👉 <code>{download_url}</code>\n"
