@@ -6,7 +6,7 @@ import psutil
 import aiohttp
 import asyncio
 from pyrogram import Client, idle, filters, errors, enums
-from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, BotCommand
+from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, BotCommand, BotCommandScopeDefault
 from motor.motor_asyncio import AsyncIOMotorClient
 from aiohttp import web
 from config import Config
@@ -381,15 +381,16 @@ async def start_services():
     # ------------------ MENU AUTO SETUP ------------------
     logger.info("Setting Bot Commands Menu...")
     try:
+        # Added Scope to FORCE update for all users immediately
         await bot.set_bot_commands([
             BotCommand("start", "🚀 Start The Stream Bot"),
-            BotCommand("smdetails", "📊 System & Bot Stats (Admin)"),
+            BotCommand("smdetails", "📊 System & Bot Stats"),
             BotCommand("setfsub", "🔐 Setup Force Sub (Admin)"),
-            BotCommand("setsh1st", "🟡 Config 1st Shortener (Admin)"),
-            BotCommand("setsh2nd", "🟢 Config 2nd Shortener (Admin)"),
-            BotCommand("setsh3rd", "🔵 Config 3rd Shortener (Admin)"),
-            BotCommand("setsh4th", "🟣 Config 4th Shortener (Admin)")
-        ])
+            BotCommand("setsh1st", "🟡 Config 1st Shortener"),
+            BotCommand("setsh2nd", "🟢 Config 2nd Shortener"),
+            BotCommand("setsh3rd", "🔵 Config 3rd Shortener"),
+            BotCommand("setsh4th", "🟣 Config 4th Shortener")
+        ], scope=BotCommandScopeDefault())
         logger.info("Commands menu updated successfully!")
     except Exception as e:
         logger.error(f"Failed to set bot commands: {e}")
