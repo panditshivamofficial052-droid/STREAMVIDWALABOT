@@ -6,7 +6,7 @@ import psutil
 import aiohttp
 import asyncio
 from pyrogram import Client, idle, filters, errors, enums
-from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
+from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, BotCommand
 from motor.motor_asyncio import AsyncIOMotorClient
 from aiohttp import web
 from config import Config
@@ -377,6 +377,23 @@ async def handle_file(c: StreamBot, m: Message):
 async def start_services():
     logger.info("Starting Pyrogram Client...")
     await bot.start()
+    
+    # ------------------ MENU AUTO SETUP ------------------
+    logger.info("Setting Bot Commands Menu...")
+    try:
+        await bot.set_bot_commands([
+            BotCommand("start", "🚀 Start The Stream Bot"),
+            BotCommand("smdetails", "📊 System & Bot Stats (Admin)"),
+            BotCommand("setfsub", "🔐 Setup Force Sub (Admin)"),
+            BotCommand("setsh1st", "🟡 Config 1st Shortener (Admin)"),
+            BotCommand("setsh2nd", "🟢 Config 2nd Shortener (Admin)"),
+            BotCommand("setsh3rd", "🔵 Config 3rd Shortener (Admin)"),
+            BotCommand("setsh4th", "🟣 Config 4th Shortener (Admin)")
+        ])
+        logger.info("Commands menu updated successfully!")
+    except Exception as e:
+        logger.error(f"Failed to set bot commands: {e}")
+    # -----------------------------------------------------
     
     logger.info(f"Starting Web Server on {Config.BIND_ADRESS}:{Config.PORT}")
     app = web.Application()
