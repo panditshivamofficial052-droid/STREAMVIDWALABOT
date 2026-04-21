@@ -17,4 +17,5 @@ class Config:
 
     PORT = int(os.environ.get("PORT", "8080"))
     BIND_ADRESS = os.environ.get("BIND_ADRESS", "0.0.0.0")
-    FQDN = os.environ.get("FQDN", "https://herokuacountcreater-50091c02a64d.herokuapp.com/") # Agar empty hai toh system IP use karega
+    # FQDN blank choda hai taaki platforms ka auto-detection trigger ho sake
+    FQDN = os.environ.get("FQDN", "")
