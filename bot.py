@@ -1,7 +1,7 @@
 import os
 import logging
 import aiohttp
-from pyrogram import Client, filters, errors
+from pyrogram import Client, filters, errors, enums
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from motor.motor_asyncio import AsyncIOMotorClient
 from aiohttp import web
@@ -22,7 +22,6 @@ class StreamBot(Client):
         self.db = self.db_client.get_database("StreamBot")
         self.settings = self.db.settings
         self.users = self.db.users
-        # Removing auto-detect, strictly using FQDN from Config
         self.public_url = Config.FQDN.rstrip('/')
 
     async def get_db_settings(self):
@@ -99,7 +98,7 @@ async def toggle_settings(c, m: Message):
         await c.settings.update_one({"id": "config"}, {"$set": {"fsub": state}})
     else:
         await c.settings.update_one({"id": "config"}, {"$set": {f"{key}.status": state}})
-    await m.reply(f"✅ {key.upper()} set to {'ON' if state else 'OFF'}")
+    await m.reply(f"✅ <b>{key.upper()}</b> set to <b>{'ON' if state else 'OFF'}</b>", parse_mode=enums.ParseMode.HTML)
 
 @bot.on_message(filters.command(["1stdomain", "2nddomain", "3rddomain", "4thdomain", "1stapi", "2ndapi", "3rdapi", "4thapi"]) & filters.user(Config.OWNER_ID))
 async def update_configs(c, m: Message):
@@ -109,7 +108,7 @@ async def update_configs(c, m: Message):
     num = cmd[0]
     field = "domain" if "domain" in cmd else "api"
     await c.settings.update_one({"id": "config"}, {"$set": {f"sh{num}.{field}": val}})
-    await m.reply(f"✅ Updated Shortener {num} {field}")
+    await m.reply(f"✅ Updated Shortener <b>{num}</b> <b>{field}</b>", parse_mode=enums.ParseMode.HTML)
 
 @bot.on_message(filters.command("start") & filters.private)
 async def start_msg(c, m: Message):
@@ -117,8 +116,9 @@ async def start_msg(c, m: Message):
         await c.users.insert_one({"user_id": m.from_user.id, "name": m.from_user.first_name})
     
     await m.reply_text(
-        f"👋 **Hi {m.from_user.first_name}!**\n\nI am a high-speed File Stream bot. Just send me any file and I will generate an instant streaming and download link for it.",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Updates Channel", url=f"https://t.me/{Config.FORCE_SUB_CHANNEL}")]])
+        f"<blockquote>👋 <b>Hi {m.from_user.first_name}!</b>\n\nI am a high-speed File Stream bot. Just send me any file and I will generate an instant streaming and download link for it.</blockquote>",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Updates Channel", url=f"https://t.me/{Config.FORCE_SUB_CHANNEL}")]]),
+        parse_mode=enums.ParseMode.HTML
     )
 
 @bot.on_message(filters.private & (filters.document | filters.video | filters.audio))
@@ -132,8 +132,9 @@ async def handle_file(c: StreamBot, m: Message):
         except errors.UserNotParticipant:
             invite_link = (await c.get_chat(Config.FORCE_SUB_CHANNEL)).invite_link
             return await m.reply(
-                "❌ **Join Channel First!**\n\nYou must join the channel first to stream files.",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Join Now", url=invite_link or f"https://t.me/{Config.FORCE_SUB_CHANNEL}")]])
+                "<blockquote>❌ <b>Join Channel First!</b>\n\nYou must join the channel first to stream files.</blockquote>",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Join Now", url=invite_link or f"https://t.me/{Config.FORCE_SUB_CHANNEL}")]]),
+                parse_mode=enums.ParseMode.HTML
             )
         except Exception as e:
             logger.error(f"Fsub Error: {e}")
@@ -149,15 +150,15 @@ async def handle_file(c: StreamBot, m: Message):
         sh = db[f'sh{i}']
         if sh['status'] and sh['domain'] and sh['api']:
             short = await c.get_shortlink(stream_url, sh['domain'], sh['api'])
-            final_links.append(f"🔗 **Link {i}:** `{short}`")
+            final_links.append(f"🔗 <b>Link {i}:</b> <code>{short}</code>")
             buttons.append([InlineKeyboardButton(f"Stream/Download {i}", url=short)])
     
     if not final_links:
-        final_links.append(f"🔗 **Direct Link:** `{stream_url}`")
+        final_links.append(f"🔗 <b>Direct Link:</b> <code>{stream_url}</code>")
         buttons.append([InlineKeyboardButton("Direct Stream", url=stream_url)])
 
-    text = "✅ **Your Links are Ready!**\n\n" + "\n".join(final_links)
-    await m.reply_text(text, reply_markup=InlineKeyboardMarkup(buttons), quote=True)
+    text = "<blockquote>✅ <b>Your Links are Ready!</b>\n\n" + "\n".join(final_links) + "</blockquote>"
+    await m.reply_text(text, reply_markup=InlineKeyboardMarkup(buttons), quote=True, parse_mode=enums.ParseMode.HTML)
 
 if __name__ == "__main__":
     bot.run()
