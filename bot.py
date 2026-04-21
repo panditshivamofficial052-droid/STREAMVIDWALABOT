@@ -4,7 +4,8 @@ import shutil
 import logging
 import psutil
 import aiohttp
-from pyrogram import Client, filters, errors, enums
+import asyncio
+from pyrogram import Client, idle, filters, errors, enums
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from motor.motor_asyncio import AsyncIOMotorClient
 from aiohttp import web
@@ -78,21 +79,6 @@ class StreamBot(Client):
         except Exception as e:
             logger.error(f"Shortener Error: {e}")
             return url
-
-    async def start(self):
-        await super().start()
-        logger.info(f"Bot & Stream Server starting... Links will use: {self.public_url}")
-        
-        # Web Server Setup
-        app = web.Application()
-        app.router.add_get("/", lambda r: web.Response(text="Bot Active"))
-        app.router.add_get("/stream/{msg_id}", self.stream_handler)
-        app.router.add_get("/download/{msg_id}", self.stream_handler)
-        app.router.add_get("/watch/{msg_id}", self.watch_handler)
-        app.router.add_get("/thumb/{msg_id}", self.thumb_handler)
-        runner = web.AppRunner(app)
-        await runner.setup()
-        await web.TCPSite(runner, Config.BIND_ADRESS, Config.PORT).start()
 
     async def thumb_handler(self, request):
         try:
@@ -384,8 +370,34 @@ async def handle_file(c: StreamBot, m: Message):
         text, 
         reply_markup=InlineKeyboardMarkup(buttons), 
         quote=True, 
+        disable_web_page_preview=True,
         parse_mode=enums.ParseMode.HTML
     )
 
+async def start_services():
+    logger.info("Starting Pyrogram Client...")
+    await bot.start()
+    
+    logger.info(f"Starting Web Server on {Config.BIND_ADRESS}:{Config.PORT}")
+    app = web.Application()
+    app.router.add_get("/", lambda r: web.Response(text="Bot Active"))
+    app.router.add_get("/stream/{msg_id}", bot.stream_handler)
+    app.router.add_get("/download/{msg_id}", bot.stream_handler)
+    app.router.add_get("/watch/{msg_id}", bot.watch_handler)
+    app.router.add_get("/thumb/{msg_id}", bot.thumb_handler)
+    
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, Config.BIND_ADRESS, Config.PORT)
+    await site.start()
+    
+    logger.info("Services started successfully. Idling...")
+    await idle()
+    
+    logger.info("Stopping services...")
+    await runner.cleanup()
+    await bot.stop()
+
 if __name__ == "__main__":
-    bot.run()
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(start_services())
