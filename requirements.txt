@@ -1,5 +1,6 @@
 pyrogram
-tgcrypto
-motor
+TgCrypto
 aiohttp
+motor
 python-dotenv
+psutil
