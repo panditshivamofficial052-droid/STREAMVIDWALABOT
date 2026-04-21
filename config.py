@@ -12,10 +12,11 @@ class Config:
     OWNER_ID = [int(x) for x in _owner_raw.split() if x.strip().isdigit()]
     
     MONGO_URI = os.environ.get("MONGO_URI", "mongodb+srv://samplesamra:samplesamra@samplesamra.qtff1nr.mongodb.net/?appName=samplesamra")
-    BIN_CHANNEL = int(os.environ.get("BIN_CHANNEL", "-1003820017953"))
+    BIN_CHANNEL = int(os.environ.get("BIN_CHANNEL", "-1003897251767"))
     FORCE_SUB_CHANNEL = os.environ.get("FORCE_SUB_CHANNEL", "kamai4youpayment")
 
     PORT = int(os.environ.get("PORT", "8080"))
     BIND_ADRESS = os.environ.get("BIND_ADRESS", "0.0.0.0")
-    # FQDN blank choda hai taaki platforms ka auto-detection trigger ho sake
-    FQDN = os.environ.get("FQDN", "")
+    
+    # Strictly using your Heroku App URL
+    FQDN = os.environ.get("FQDN", "https://herokuacountcreater-50091c02a64d.herokuapp.com")
