@@ -11,7 +11,7 @@ class Config:
     _owner_raw = os.environ.get("OWNER_ID", "7893435873 7010804219").replace(",", " ")
     OWNER_ID = [int(x) for x in _owner_raw.split() if x.strip().isdigit()]
     
-    MONGO_URI = os.environ.get("MONGO_URI", "mongodb+srv://samplesamra:samplesamra@samplesamra.qtff1nr.mongodb.net/?appName=samplesamra")
+    MONGO_URI = os.environ.get("MONGO_URI", "mongodb+srv://a:a@loude.0uy8em5.mongodb.net/?appName=LOUDE")
     BIN_CHANNEL = int(os.environ.get("BIN_CHANNEL", "-1003897251767"))
     FORCE_SUB_CHANNEL = os.environ.get("FORCE_SUB_CHANNEL", "kamai4youpayment")
 
