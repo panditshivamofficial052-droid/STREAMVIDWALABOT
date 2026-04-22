@@ -67,6 +67,7 @@ class StreamBot(Client):
             default = {
                 "id": "config",
                 "bin_channel": "",
+                "tutorial_link": "",
                 "fsub": {"status": False, "channel": ""},
                 "sh1": {"status": False, "domain": "", "api": ""},
                 "sh2": {"status": False, "domain": "", "api": ""},
@@ -266,19 +267,16 @@ async def set_bin_channel(c, m: Message):
     except ValueError:
         channel = m.command[1]
         
-    # processing = await m.reply("<i>Verifying Bin Channel access...</i>", parse_mode=enums.ParseMode.HTML)
     try:
-        # member = await c.get_chat_member(channel, c.me.id)
-        # if member.status not in [enums.ChatMemberStatus.ADMINISTRATOR, enums.ChatMemberStatus.OWNER]:
-        #     return await processing.edit("❌ <b>Error:</b> I am not an admin in that channel. Please promote me first.")
-        
-        # chat = await c.get_chat(channel)
         await c.settings.update_one({"id": "config"}, {"$set": {"bin_channel": channel}}, upsert=True)
-        
-        # await c.send_message(chat.id, "✅ <b>Bin Channel connected and cached in Database.</b>", parse_mode=enums.ParseMode.HTML)
         await m.reply(f"✅ <b>Success!</b> Bin Channel ID <b>{channel}</b> is saved in MongoDB.", parse_mode=enums.ParseMode.HTML)
     except Exception as e:
         await m.reply(f"❌ <b>Error saving channel:</b>\n<code>{e}</code>", parse_mode=enums.ParseMode.HTML)
+
+@bot.on_message(filters.command(["sett"]) & filters.user(Config.OWNER_ID))
+async def set_tutorial_link(c, m: Message):
+    admin_states[m.from_user.id] = {"step": "tutorial_link"}
+    await m.reply("🟢 <b>How to Download Link Setup</b>\n\n👉 Please send the <b>URL/Link</b> (or send 'off' to remove):", parse_mode=enums.ParseMode.HTML)
 
 @bot.on_message(filters.command(["forcesub"]) & filters.user(Config.OWNER_ID))
 async def toggle_fsub(c, m: Message):
@@ -317,7 +315,7 @@ async def setup_shorteners(c, m: Message):
         admin_states[m.from_user.id] = {"step": "domain", "num": num}
         await m.reply(f"🟢 <b>Setting up Shortener {num}</b>\n\n👉 Please send the <b>DOMAIN NAME</b> (e.g., <code>shareus.io</code>):", parse_mode=enums.ParseMode.HTML)
 
-@bot.on_message(filters.private & filters.text & filters.user(Config.OWNER_ID) & ~filters.command(["start", "smdetails", "forcesub", "setsh1st", "setsh2nd", "setsh3rd", "setsh4th", "sbinch"]))
+@bot.on_message(filters.private & filters.text & filters.user(Config.OWNER_ID) & ~filters.command(["start", "smdetails", "forcesub", "setsh1st", "setsh2nd", "setsh3rd", "setsh4th", "sbinch", "sett"]))
 async def state_handler(c, m: Message):
     user_id = m.from_user.id
     
@@ -325,6 +323,21 @@ async def state_handler(c, m: Message):
         state_info = admin_states[user_id]
         step = state_info["step"]
         
+        if step == "tutorial_link":
+            link = m.text.strip()
+            if link.lower() in ["off", "none", "disable"]:
+                await c.settings.update_one({"id": "config"}, {"$set": {"tutorial_link": ""}}, upsert=True)
+                del admin_states[user_id]
+                return await m.reply("✅ <b>Tutorial link removed. Button will be hidden.</b>", parse_mode=enums.ParseMode.HTML)
+            
+            if not link.startswith("http"):
+                link = "https://" + link
+                
+            await c.settings.update_one({"id": "config"}, {"$set": {"tutorial_link": link}}, upsert=True)
+            del admin_states[user_id]
+            await m.reply(f"✅ <b>Success!</b> 'How to Download' link saved:\n<code>{link}</code>", parse_mode=enums.ParseMode.HTML)
+            return
+            
         if step == "fsub_channel":
             channel = m.text.strip()
             processing = await m.reply("<i>Verifying admin rights...</i>", parse_mode=enums.ParseMode.HTML)
@@ -372,7 +385,10 @@ async def smdetails_cmd(c: StreamBot, m: Message):
     text += f"💿 <b>Storage Free:</b> <code>{free // (2**30)} GB / {total // (2**30)} GB</code>\n\n"
     
     bin_ch = db.get('bin_channel')
-    text += f"📂 <b>Bin Channel:</b> <code>{bin_ch if bin_ch else 'NOT SET'}</code>\n\n"
+    text += f"📂 <b>Bin Channel:</b> <code>{bin_ch if bin_ch else 'NOT SET'}</code>\n"
+    
+    tut_link = db.get('tutorial_link')
+    text += f"❓ <b>Tutorial Link:</b> <code>{tut_link if tut_link else 'NOT SET'}</code>\n\n"
     
     text += f"🔗 <b>Shorteners Status:</b>\n\n"
     for i in range(1, 5):
@@ -448,7 +464,7 @@ async def handle_file(c: StreamBot, m: Message):
         bin_msg = await m.forward(bin_channel)
     except Exception as e:
         logger.error(f"Forwarding Error: {e}")
-        return await processing_msg.edit(f"❌ <b>Error:</b> Failed to forward file. Ensure bot is Admin in Bin Channel ({bin_channel}).\n<code>{e}</code>", parse_mode=enums.ParseMode.HTML)
+        return await processing_msg.edit(f"❌ <b>Error:</b> Failed to forward file. Verify Bin Channel is set and bot is Admin.\n<code>{e}</code>", parse_mode=enums.ParseMode.HTML)
     
     watch_url = f"{c.public_url}/watch/{bin_msg.id}"
     download_url = f"{c.public_url}/download/{bin_msg.id}"
@@ -523,6 +539,11 @@ async def shortener_callback_handler(c: StreamBot, cb):
         [InlineKeyboardButton("📤 Share Link", url=f"https://t.me/share/url?url={short_url}")]
     ]
     
+    # Append Tutorial Link if available
+    tutorial_link = db.get("tutorial_link", "")
+    if tutorial_link:
+        buttons.append([InlineKeyboardButton("❓ How to Download", url=tutorial_link)])
+    
     if getattr(file, 'thumbs', None):
         try:
             thumb_path = await c.download_media(file.thumbs[0].file_id)
@@ -553,15 +574,6 @@ async def start_services():
     logger.info("Starting Pyrogram Client...")
     await bot.start()
     
-    # try:
-    #     db = await bot.get_db_settings()
-    #     bin_channel = db.get("bin_channel")
-    #     if bin_channel:
-    #         await bot.send_message(bin_channel, "✅ <b>Bot Engine Started!</b>", parse_mode=enums.ParseMode.HTML)
-    #         logger.info("Bin Channel ping successful.")
-    # except Exception as e:
-    #     logger.warning(f"Bin Channel ping failed on startup. Error: {e}")
-    
     logger.info("Setting Bot Commands Menu...")
     try:
         await bot.delete_bot_commands()
@@ -569,6 +581,7 @@ async def start_services():
             BotCommand("start", "🚀 Start The Stream Bot"),
             BotCommand("smdetails", "📊 System & Bot Stats"),
             BotCommand("sbinch", "⚙️ Setup Bin Channel"),
+            BotCommand("sett", "🛠 Setup How to Download Link"),
             BotCommand("forcesub", "🔐 Setup Force Sub Channel"),
             BotCommand("setsh1st", "🟡 Config 1st Shortener"),
             BotCommand("setsh2nd", "🟢 Config 2nd Shortener"),
