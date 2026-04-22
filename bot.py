@@ -6,7 +6,6 @@ import logging
 import psutil
 import aiohttp
 import asyncio
-import pyrogram.utils
 from pyrogram import Client, idle, filters, errors, enums
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, BotCommand, BotCommandScopeDefault
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -42,10 +41,6 @@ def get_readable_time(seconds: int) -> str:
     ping_time += ":".join(time_list)
     return ping_time
 
-# Pyrogram PeerIdInvalid Fix for 64-bit IDs
-pyrogram.utils.MIN_CHAT_ID = -9999999999999
-pyrogram.utils.MIN_CHANNEL_ID = -10099999999999
-
 class StreamBot(Client):
     def __init__(self):
         super().__init__(
@@ -78,7 +73,7 @@ class StreamBot(Client):
             
         if isinstance(data.get("fsub"), bool):
             new_fsub = {"status": data["fsub"], "channel": ""}
-            await self.settings.update_one({"id": "config"}, {"$set": {"fsub": new_fsub}})
+            await self.settings.update_one({"id": "config"}, {"$set": {"fsub": new_fsub}}, upsert=True)
             data["fsub"] = new_fsub
             
         return data
@@ -124,7 +119,7 @@ class StreamBot(Client):
             bin_channel = db_settings.get("bin_channel")
             
             if not bin_channel:
-                return web.Response(text="Bin channel is not configured by Admin yet.", status=500)
+                return web.Response(text="Bin channel is not configured.", status=500)
 
             file_msg = await self.get_messages(bin_channel, msg_id)
             if not file_msg:
@@ -167,7 +162,7 @@ class StreamBot(Client):
             bin_channel = db_settings.get("bin_channel")
             
             if not bin_channel:
-                return web.Response(status=500, text="Bin channel is not configured by Admin yet.")
+                return web.Response(status=500, text="Bin channel is not configured.")
 
             file_msg = await self.get_messages(bin_channel, msg_id)
             
@@ -259,7 +254,7 @@ bot = StreamBot()
 @bot.on_message(filters.command(["sbinch"]) & filters.user(Config.OWNER_ID))
 async def set_bin_channel(c, m: Message):
     if len(m.command) < 2:
-        return await m.reply("<b>Usage:</b> <code>/sbinch -100123456789</code>\nOr use username: <code>/sbinch @mybinchannel</code>", parse_mode=enums.ParseMode.HTML)
+        return await m.reply("<b>Usage:</b> <code>/sbinch -100123456789</code>", parse_mode=enums.ParseMode.HTML)
     
     try:
         channel = int(m.command[1])
@@ -270,16 +265,15 @@ async def set_bin_channel(c, m: Message):
     try:
         member = await c.get_chat_member(channel, c.me.id)
         if member.status not in [enums.ChatMemberStatus.ADMINISTRATOR, enums.ChatMemberStatus.OWNER]:
-            return await processing.edit("❌ <b>Error:</b> I am not an admin in that channel. Please promote me first.")
+            return await processing.edit("❌ <b>Error:</b> I am not an admin in that channel.")
         
         chat = await c.get_chat(channel)
         await c.settings.update_one({"id": "config"}, {"$set": {"bin_channel": chat.id}}, upsert=True)
         
-        await c.send_message(chat.id, "✅ <b>Bin Channel connected and cached in Database.</b>", parse_mode=enums.ParseMode.HTML)
+        await c.send_message(chat.id, "✅ <b>Bin Channel connected and verified.</b>", parse_mode=enums.ParseMode.HTML)
         await processing.edit(f"✅ <b>Success!</b> Bin Channel is set to <b>{chat.title or chat.id}</b> and saved in MongoDB.", parse_mode=enums.ParseMode.HTML)
     except Exception as e:
-        await processing.edit(f"❌ <b>Verification Failed:</b> Cannot access channel. Ensure ID is correct and bot is Admin.\n<code>{e}</code>", parse_mode=enums.ParseMode.HTML)
-        
+        await processing.edit(f"❌ <b>Verification Failed.</b> Ensure bot is Admin.\n<code>{e}</code>", parse_mode=enums.ParseMode.HTML)
 
 @bot.on_message(filters.command(["forcesub"]) & filters.user(Config.OWNER_ID))
 async def toggle_fsub(c, m: Message):
@@ -297,7 +291,6 @@ async def toggle_fsub(c, m: Message):
     elif state == "on":
         admin_states[m.from_user.id] = {"step": "fsub_channel"}
         await m.reply("🟢 <b>Force Subscribe Setup</b>\n\n👉 Please send the <b>Channel ID</b> (e.g., <code>-100123456789</code>) or <b>Username</b> (e.g., <code>@mychannel</code>):", parse_mode=enums.ParseMode.HTML)
-
 
 @bot.on_message(filters.command(["setsh1st", "setsh2nd", "setsh3rd", "setsh4th"]) & filters.user(Config.OWNER_ID))
 async def setup_shorteners(c, m: Message):
@@ -319,7 +312,6 @@ async def setup_shorteners(c, m: Message):
         admin_states[m.from_user.id] = {"step": "domain", "num": num}
         await m.reply(f"🟢 <b>Setting up Shortener {num}</b>\n\n👉 Please send the <b>DOMAIN NAME</b> (e.g., <code>shareus.io</code>):", parse_mode=enums.ParseMode.HTML)
 
-
 @bot.on_message(filters.private & filters.text & filters.user(Config.OWNER_ID) & ~filters.command(["start", "smdetails", "forcesub", "setsh1st", "setsh2nd", "setsh3rd", "setsh4th", "sbinch"]))
 async def state_handler(c, m: Message):
     user_id = m.from_user.id
@@ -334,14 +326,14 @@ async def state_handler(c, m: Message):
             try:
                 member = await c.get_chat_member(channel, c.me.id)
                 if member.status not in [enums.ChatMemberStatus.ADMINISTRATOR, enums.ChatMemberStatus.OWNER]:
-                    return await processing.edit("❌ <b>Error:</b> I am not an admin in that channel. Please promote me first.")
+                    return await processing.edit("❌ <b>Error:</b> I am not an admin in that channel.")
                 
                 chat = await c.get_chat(channel)
                 await c.settings.update_one({"id": "config"}, {"$set": {"fsub.status": True, "fsub.channel": channel}}, upsert=True)
                 del admin_states[user_id]
                 await processing.edit(f"✅ <b>Success!</b> Force Subscribe is now strictly <b>ON</b> for <b>{chat.title or channel}</b>.", parse_mode=enums.ParseMode.HTML)
             except Exception as e:
-                await processing.edit(f"❌ <b>Verification Failed:</b> Cannot access channel.\n\nEnsure the ID/Username is correct and I am added as an Admin.\n<code>{e}</code>", parse_mode=enums.ParseMode.HTML)
+                await processing.edit(f"❌ <b>Verification Failed.</b> Ensure bot is Admin.\n<code>{e}</code>", parse_mode=enums.ParseMode.HTML)
             return
 
         num = state_info.get("num")
@@ -355,8 +347,7 @@ async def state_handler(c, m: Message):
             api = m.text.strip()
             await c.settings.update_one({"id": "config"}, {"$set": {f"sh{num}.api": api, f"sh{num}.status": True}}, upsert=True)
             del admin_states[user_id]
-            await m.reply(f"🎉 <b>Success!</b>\n\n✅ <b>API saved.</b>\n🟢 <b>Shortener {num} is now completely configured and turned ON!</b>", parse_mode=enums.ParseMode.HTML)
-
+            await m.reply(f"✅ <b>API saved. Shortener {num} is ON.</b>", parse_mode=enums.ParseMode.HTML)
 
 @bot.on_message(filters.command("smdetails") & filters.user(Config.OWNER_ID))
 async def smdetails_cmd(c: StreamBot, m: Message):
@@ -444,7 +435,7 @@ async def handle_file(c: StreamBot, m: Message):
 
     bin_channel = db.get("bin_channel")
     if not bin_channel:
-        return await m.reply("❌ <b>Bin Channel not set!</b>\nAdmin needs to use <code>/sbinch &lt;channel_id&gt;</code> first.", parse_mode=enums.ParseMode.HTML)
+        return await m.reply("❌ <b>Bin Channel not set!</b> Admin needs to configure it via <code>/sbinch</code>.", parse_mode=enums.ParseMode.HTML)
 
     processing_msg = await m.reply("<i>Processing your file...</i>", parse_mode=enums.ParseMode.HTML)
 
@@ -501,20 +492,20 @@ async def shortener_callback_handler(c: StreamBot, cb):
     sh_data = db.get(f"sh{sh_num}", {})
     
     if not sh_data or not sh_data.get("status"):
-        return await cb.answer("❌ This shortener is currently disabled by Admin.", show_alert=True)
+        return await cb.answer("❌ This shortener is disabled.", show_alert=True)
         
     watch_url = f"{c.public_url}/watch/{msg_id}?sh={sh_num}"
     short_url = await c.get_shortlink(watch_url, sh_data.get('domain', ''), sh_data.get('api', ''))
     
     bin_channel = db.get("bin_channel")
     if not bin_channel:
-        return await cb.answer("❌ Bin Channel not set by Admin.", show_alert=True)
+        return await cb.answer("❌ Bin Channel not set.", show_alert=True)
 
     try:
         file_msg = await c.get_messages(bin_channel, msg_id)
     except Exception as e:
         logger.error(f"Message Fetch Error: {e}")
-        return await cb.message.reply_text(f"❌ <b>Error:</b> Failed to fetch file from Bin Channel.\n<code>{e}</code>", parse_mode=enums.ParseMode.HTML)
+        return await cb.message.reply_text(f"❌ <b>Error:</b> Failed to fetch file.\n<code>{e}</code>", parse_mode=enums.ParseMode.HTML)
         
     file = file_msg.document or file_msg.video or file_msg.audio
     file_name = getattr(file, 'file_name', None) or f"File_{msg_id}"
@@ -602,7 +593,6 @@ async def start_services():
     logger.info("Stopping services...")
     await runner.cleanup()
     await bot.stop()
-
 
 if __name__ == "__main__":
     loop = asyncio.get_event_loop()
