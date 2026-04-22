@@ -66,6 +66,7 @@ class StreamBot(Client):
         if not data:
             default = {
                 "id": "config",
+                "bin_channel": "",
                 "fsub": {"status": False, "channel": ""},
                 "sh1": {"status": False, "domain": "", "api": ""},
                 "sh2": {"status": False, "domain": "", "api": ""},
@@ -95,7 +96,13 @@ class StreamBot(Client):
     async def thumb_handler(self, request):
         try:
             msg_id = int(request.match_info['msg_id'])
-            file_msg = await self.get_messages(Config.BIN_CHANNEL, msg_id)
+            db_settings = await self.get_db_settings()
+            bin_channel = db_settings.get("bin_channel")
+            
+            if not bin_channel:
+                return web.Response(status=404)
+
+            file_msg = await self.get_messages(bin_channel, msg_id)
             if not file_msg:
                 return web.Response(status=404)
 
@@ -113,7 +120,13 @@ class StreamBot(Client):
     async def watch_handler(self, request):
         try:
             msg_id = int(request.match_info['msg_id'])
-            file_msg = await self.get_messages(Config.BIN_CHANNEL, msg_id)
+            db_settings = await self.get_db_settings()
+            bin_channel = db_settings.get("bin_channel")
+            
+            if not bin_channel:
+                return web.Response(text="Bin channel is not configured by Admin yet.", status=500)
+
+            file_msg = await self.get_messages(bin_channel, msg_id)
             if not file_msg:
                 return web.Response(text="File not found", status=404)
             
@@ -130,7 +143,6 @@ class StreamBot(Client):
             share_url = f"{self.public_url}/watch/{msg_id}"
             sh_num = request.query.get("sh")
             if sh_num and sh_num.isdigit():
-                db_settings = await self.get_db_settings()
                 sh_data = db_settings.get(f"sh{sh_num}")
                 if sh_data and sh_data.get("status"):
                     target_raw = f"{self.public_url}/watch/{msg_id}"
@@ -151,7 +163,13 @@ class StreamBot(Client):
     async def stream_handler(self, request):
         try:
             msg_id = int(request.match_info['msg_id'])
-            file_msg = await self.get_messages(Config.BIN_CHANNEL, msg_id)
+            db_settings = await self.get_db_settings()
+            bin_channel = db_settings.get("bin_channel")
+            
+            if not bin_channel:
+                return web.Response(status=500, text="Bin channel is not configured by Admin yet.")
+
+            file_msg = await self.get_messages(bin_channel, msg_id)
             
             if not file_msg:
                 return web.Response(status=404, text="Message not found in database")
@@ -238,6 +256,32 @@ class StreamBot(Client):
 
 bot = StreamBot()
 
+@bot.on_message(filters.command(["sbinch"]) & filters.user(Config.OWNER_ID))
+async def set_bin_channel(c, m: Message):
+    if len(m.command) < 2:
+        return await m.reply("<b>Usage:</b> <code>/sbinch -100123456789</code>\nOr use username: <code>/sbinch @mybinchannel</code>", parse_mode=enums.ParseMode.HTML)
+    
+    try:
+        channel = int(m.command[1])
+    except ValueError:
+        channel = m.command[1]
+        
+    processing = await m.reply("<i>Verifying Bin Channel access...</i>", parse_mode=enums.ParseMode.HTML)
+    try:
+        member = await c.get_chat_member(channel, c.me.id)
+        if member.status not in [enums.ChatMemberStatus.ADMINISTRATOR, enums.ChatMemberStatus.OWNER]:
+            return await processing.edit("❌ <b>Error:</b> I am not an admin in that channel. Please promote me first.")
+        
+        chat = await c.get_chat(channel)
+        await c.settings.update_one({"id": "config"}, {"$set": {"bin_channel": chat.id}})
+        
+        await c.send_message(chat.id, "✅ <b>Bin Channel properly connected and cached in Database!</b>", parse_mode=enums.ParseMode.HTML)
+        
+        await processing.edit(f"✅ <b>Success!</b> Bin Channel is now permanently set to <b>{chat.title or chat.id}</b>.\n\nI have saved it in MongoDB. It will perfectly survive Heroku restarts now!", parse_mode=enums.ParseMode.HTML)
+    except Exception as e:
+        await processing.edit(f"❌ <b>Verification Failed:</b> Cannot access channel.\n\nEnsure the ID is correct and I am added as an Admin.\n<code>{e}</code>", parse_mode=enums.ParseMode.HTML)
+
+
 @bot.on_message(filters.command(["forcesub"]) & filters.user(Config.OWNER_ID))
 async def toggle_fsub(c, m: Message):
     if len(m.command) < 2 or m.command[1].lower() not in ["on", "off"]:
@@ -275,7 +319,7 @@ async def setup_shorteners(c, m: Message):
         admin_states[m.from_user.id] = {"step": "domain", "num": num}
         await m.reply(f"🟢 <b>Setting up Shortener {num}</b>\n\n👉 Please send the <b>DOMAIN NAME</b> (e.g., <code>shareus.io</code>):", parse_mode=enums.ParseMode.HTML)
 
-@bot.on_message(filters.private & filters.text & filters.user(Config.OWNER_ID) & ~filters.command(["start", "smdetails", "forcesub", "setsh1st", "setsh2nd", "setsh3rd", "setsh4th"]))
+@bot.on_message(filters.private & filters.text & filters.user(Config.OWNER_ID) & ~filters.command(["start", "smdetails", "forcesub", "setsh1st", "setsh2nd", "setsh3rd", "setsh4th", "sbinch"]))
 async def state_handler(c, m: Message):
     user_id = m.from_user.id
     
@@ -328,6 +372,9 @@ async def smdetails_cmd(c: StreamBot, m: Message):
     text += f"💻 <b>CPU Usage:</b> <code>{cpu}%</code>\n"
     text += f"💾 <b>RAM Usage:</b> <code>{ram.percent}%</code>\n"
     text += f"💿 <b>Storage Free:</b> <code>{free // (2**30)} GB / {total // (2**30)} GB</code>\n\n"
+    
+    bin_ch = db.get('bin_channel')
+    text += f"📂 <b>Bin Channel:</b> <code>{bin_ch if bin_ch else 'NOT SET'}</code>\n\n"
     
     text += f"🔗 <b>Shorteners Status:</b>\n\n"
     for i in range(1, 5):
@@ -389,13 +436,20 @@ async def handle_file(c: StreamBot, m: Message):
         except Exception as e:
             logger.error(f"Fsub Check Error: {e}")
 
+    bin_channel = db.get("bin_channel")
+    if not bin_channel:
+        return await m.reply("❌ <b>Bin Channel not set!</b>\nAdmin needs to use <code>/sbinch &lt;channel_id&gt;</code> first.", parse_mode=enums.ParseMode.HTML)
+
     processing_msg = await m.reply("<i>Processing your file...</i>", parse_mode=enums.ParseMode.HTML)
 
     try:
-        bin_msg = await m.forward(Config.BIN_CHANNEL)
+        bin_msg = await m.forward(bin_channel)
     except Exception as e:
         logger.error(f"Forwarding Error: {e}")
-        return await processing_msg.edit(f"❌ <b>Error:</b> Failed to forward file to Bin Channel. Check bot admin rights.\n<code>{e}</code>", parse_mode=enums.ParseMode.HTML)
+        error_txt = f"❌ <b>Error:</b> Failed to forward file to Bin Channel.\n\n"
+        error_txt += f"⚠️ <b>If Heroku restarted, the cache might be wiped!</b>\n"
+        error_txt += f"👉 <b>Quick Fix:</b> Just send <code>/sbinch {bin_channel}</code> again to refresh it!\n\n<code>{e}</code>"
+        return await processing_msg.edit(error_txt, parse_mode=enums.ParseMode.HTML)
     
     watch_url = f"{c.public_url}/watch/{bin_msg.id}"
     download_url = f"{c.public_url}/download/{bin_msg.id}"
@@ -449,8 +503,12 @@ async def shortener_callback_handler(c: StreamBot, cb):
     watch_url = f"{c.public_url}/watch/{msg_id}?sh={sh_num}"
     short_url = await c.get_shortlink(watch_url, sh_data.get('domain', ''), sh_data.get('api', ''))
     
+    bin_channel = db.get("bin_channel")
+    if not bin_channel:
+        return await cb.answer("❌ Bin Channel not set by Admin.", show_alert=True)
+
     try:
-        file_msg = await c.get_messages(Config.BIN_CHANNEL, msg_id)
+        file_msg = await c.get_messages(bin_channel, msg_id)
     except Exception as e:
         logger.error(f"Message Fetch Error: {e}")
         return await cb.message.reply_text(f"❌ <b>Error:</b> Failed to fetch file from Bin Channel.\n<code>{e}</code>", parse_mode=enums.ParseMode.HTML)
@@ -496,19 +554,14 @@ async def start_services():
     logger.info("Starting Pyrogram Client...")
     await bot.start()
     
-    # ------------------ WAKE UP BIN CHANNEL & CACHE REBUILD (Heroku Session Fix) ------------------
-    logger.info("Rebuilding Peer Cache for Heroku Restart...")
     try:
-        # Iterating over dialogs fetches chats and forces Pyrogram to cache Peer IDs
-        async for dialog in bot.get_dialogs():
-            pass 
-        logger.info("Peer Cache rebuilt successfully.")
-        
-        await bot.send_message(Config.BIN_CHANNEL, "✅ <b>Bot Engine Restarted!</b>\nPeer cache and Bin Channel connection verified.", parse_mode=enums.ParseMode.HTML)
-        logger.info("Bin Channel connected and cached.")
+        db = await bot.get_db_settings()
+        bin_channel = db.get("bin_channel")
+        if bin_channel:
+            await bot.send_message(bin_channel, "✅ <b>Bot Engine Restarted!</b>\nMongoDB connection verified.", parse_mode=enums.ParseMode.HTML)
+            logger.info("Bin Channel ping successful via MongoDB Data.")
     except Exception as e:
-        logger.error(f"Bin Channel connection/cache failed on startup: {e}")
-    # -----------------------------------------------------------------------------------------------
+        logger.warning(f"Bin Channel ping failed on startup. Cache might be wiped by Heroku. Send /sbinch to fix. Error: {e}")
     
     logger.info("Setting Bot Commands Menu...")
     try:
@@ -516,6 +569,7 @@ async def start_services():
         await bot.set_bot_commands([
             BotCommand("start", "🚀 Start The Stream Bot"),
             BotCommand("smdetails", "📊 System & Bot Stats"),
+            BotCommand("sbinch", "⚙️ Setup Bin Channel"),
             BotCommand("forcesub", "🔐 Setup Force Sub Channel"),
             BotCommand("setsh1st", "🟡 Config 1st Shortener"),
             BotCommand("setsh2nd", "🟢 Config 2nd Shortener"),
