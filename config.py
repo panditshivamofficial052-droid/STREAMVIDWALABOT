@@ -19,4 +19,4 @@ class Config:
     BIND_ADRESS = os.environ.get("BIND_ADRESS", "0.0.0.0")
     
     # Strictly using your Heroku App URL
-    FQDN = os.environ.get("FQDN", "https://herokuacountcreater-50091c02a64d.herokuapp.com")
+    FQDN = os.environ.get("FQDN", "https://sherrrdonstreaming-abb3ab2bbf3d.herokuapp.com/")
