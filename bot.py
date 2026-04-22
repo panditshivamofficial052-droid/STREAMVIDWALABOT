@@ -1,4 +1,5 @@
 import os
+import re
 import time
 import shutil
 import logging
@@ -60,7 +61,7 @@ class StreamBot(Client):
         if not data:
             default = {
                 "id": "config",
-                "fsub": True,
+                "fsub": {"status": False, "channel": ""},
                 "sh1": {"status": False, "domain": "", "api": ""},
                 "sh2": {"status": False, "domain": "", "api": ""},
                 "sh3": {"status": False, "domain": "", "api": ""},
@@ -68,6 +69,13 @@ class StreamBot(Client):
             }
             await self.settings.insert_one(default)
             return default
+            
+        # Migration for old boolean fsub format to new dictionary format
+        if isinstance(data.get("fsub"), bool):
+            new_fsub = {"status": data["fsub"], "channel": ""}
+            await self.settings.update_one({"id": "config"}, {"$set": {"fsub": new_fsub}})
+            data["fsub"] = new_fsub
+            
         return data
 
     async def get_shortlink(self, url, domain, api):
@@ -115,11 +123,22 @@ class StreamBot(Client):
             file_name = getattr(file, 'file_name', None) or f"File_{msg_id}"
             mime_type = getattr(file, 'mime_type', None) or "video/mp4"
 
+            # Dynamic Share URL Logic based on shortener query param
+            share_url = f"{self.public_url}/watch/{msg_id}"
+            sh_num = request.query.get("sh")
+            if sh_num and sh_num.isdigit():
+                db_settings = await self.get_db_settings()
+                sh_data = db_settings.get(f"sh{sh_num}")
+                if sh_data and sh_data.get("status"):
+                    target_raw = f"{self.public_url}/watch/{msg_id}"
+                    share_url = await self.get_shortlink(target_raw, sh_data['domain'], sh_data['api'])
+
             html_content = tv_template_sheffy_samra.replace("[[STREAM_URL]]", stream_url)
             html_content = html_content.replace("[[DOWNLOAD_URL]]", download_url)
             html_content = html_content.replace("[[THUMB_URL]]", thumb_url)
             html_content = html_content.replace("[[FILE_NAME]]", file_name)
             html_content = html_content.replace("[[MIME_TYPE]]", mime_type)
+            html_content = html_content.replace("[[SHARE_URL]]", share_url)
 
             return web.Response(text=html_content, content_type='text/html')
         except Exception as e:
@@ -216,11 +235,23 @@ class StreamBot(Client):
 
 bot = StreamBot()
 
-@bot.on_message(filters.command(["setfsub"]) & filters.user(Config.OWNER_ID))
+# Complete Dynamic Force Sub Flow
+@bot.on_message(filters.command(["forcesub"]) & filters.user(Config.OWNER_ID))
 async def toggle_fsub(c, m: Message):
-    state = m.command[1].lower() == "on" if len(m.command) > 1 else False
-    await c.settings.update_one({"id": "config"}, {"$set": {"fsub": state}})
-    await m.reply(f"✅ <b>FSUB</b> set to <b>{'ON' if state else 'OFF'}</b>", parse_mode=enums.ParseMode.HTML)
+    if len(m.command) < 2 or m.command[1].lower() not in ["on", "off"]:
+        return await m.reply("<b>Usage:</b> <code>/forcesub on</code> or <code>/forcesub off</code>", parse_mode=enums.ParseMode.HTML)
+        
+    state = m.command[1].lower()
+    
+    if state == "off":
+        await c.settings.update_one({"id": "config"}, {"$set": {"fsub.status": False}})
+        if m.from_user.id in admin_states:
+            del admin_states[m.from_user.id]
+        await m.reply("✅ <b>Force Subscribe has been turned OFF.</b>", parse_mode=enums.ParseMode.HTML)
+        
+    elif state == "on":
+        admin_states[m.from_user.id] = {"step": "fsub_channel"}
+        await m.reply("🟢 <b>Force Subscribe Setup</b>\n\n👉 Please send the <b>Channel ID</b> (e.g., <code>-100123456789</code>) or <b>Username</b> (e.g., <code>@mychannel</code>):", parse_mode=enums.ParseMode.HTML)
 
 # Setup Shorteners with Conversation Logic
 @bot.on_message(filters.command(["setsh1st", "setsh2nd", "setsh3rd", "setsh4th"]) & filters.user(Config.OWNER_ID))
@@ -243,16 +274,34 @@ async def setup_shorteners(c, m: Message):
         admin_states[m.from_user.id] = {"step": "domain", "num": num}
         await m.reply(f"🟢 <b>Setting up Shortener {num}</b>\n\n👉 Please send the <b>DOMAIN NAME</b> (e.g., <code>shareus.io</code>):", parse_mode=enums.ParseMode.HTML)
 
-# Conversation State Listener
-@bot.on_message(filters.private & filters.text & filters.user(Config.OWNER_ID) & ~filters.command(["start", "smdetails", "setfsub", "setsh1st", "setsh2nd", "setsh3rd", "setsh4th"]))
+# Main Conversation State Listener
+@bot.on_message(filters.private & filters.text & filters.user(Config.OWNER_ID) & ~filters.command(["start", "smdetails", "forcesub", "setsh1st", "setsh2nd", "setsh3rd", "setsh4th"]))
 async def state_handler(c, m: Message):
     user_id = m.from_user.id
     
     if user_id in admin_states:
         state_info = admin_states[user_id]
-        num = state_info["num"]
         step = state_info["step"]
         
+        # Handle Force Sub Channel Setup
+        if step == "fsub_channel":
+            channel = m.text.strip()
+            processing = await m.reply("<i>Verifying admin rights...</i>", parse_mode=enums.ParseMode.HTML)
+            try:
+                member = await c.get_chat_member(channel, c.me.id)
+                if member.status not in [enums.ChatMemberStatus.ADMINISTRATOR, enums.ChatMemberStatus.OWNER]:
+                    return await processing.edit("❌ <b>Error:</b> I am not an admin in that channel. Please promote me first.")
+                
+                chat = await c.get_chat(channel)
+                await c.settings.update_one({"id": "config"}, {"$set": {"fsub.status": True, "fsub.channel": channel}})
+                del admin_states[user_id]
+                await processing.edit(f"✅ <b>Success!</b> Force Subscribe is now strictly <b>ON</b> for <b>{chat.title or channel}</b>.", parse_mode=enums.ParseMode.HTML)
+            except Exception as e:
+                await processing.edit(f"❌ <b>Verification Failed:</b> Cannot access channel.\n\nEnsure the ID/Username is correct and I am added as an Admin.\n<code>{e}</code>", parse_mode=enums.ParseMode.HTML)
+            return
+
+        # Handle Shortener Setup
+        num = state_info.get("num")
         if step == "domain":
             domain = m.text.strip()
             await c.settings.update_one({"id": "config"}, {"$set": {f"sh{num}.domain": domain}})
@@ -304,10 +353,18 @@ async def start_msg(c, m: Message):
         f"Just send or forward me any video, audio, or document file, and I will generate your personalized links!</blockquote>"
     )
     
+    db = await c.get_db_settings()
+    fsub_conf = db.get("fsub", {})
     buttons = []
-    if Config.FORCE_SUB_CHANNEL:
-        buttons.append([InlineKeyboardButton("📢 Join Updates Channel", url=f"https://t.me/{Config.FORCE_SUB_CHANNEL}")])
-        
+    
+    if fsub_conf.get("status") and fsub_conf.get("channel"):
+        try:
+            chat = await c.get_chat(fsub_conf["channel"])
+            invite_link = chat.invite_link or f"https://t.me/{str(fsub_conf['channel']).replace('@', '')}"
+            buttons.append([InlineKeyboardButton("📢 Join Updates Channel", url=invite_link)])
+        except Exception:
+            pass
+            
     await m.reply_text(
         text,
         reply_markup=InlineKeyboardMarkup(buttons) if buttons else None,
@@ -318,18 +375,22 @@ async def start_msg(c, m: Message):
 async def handle_file(c: StreamBot, m: Message):
     db = await c.get_db_settings()
     
-    if db['fsub'] and Config.FORCE_SUB_CHANNEL:
+    # Strictly Enforced Sub Logic
+    fsub_conf = db.get("fsub", {})
+    if fsub_conf.get("status") and fsub_conf.get("channel"):
+        channel = fsub_conf["channel"]
         try:
-            await c.get_chat_member(Config.FORCE_SUB_CHANNEL, m.from_user.id)
+            await c.get_chat_member(channel, m.from_user.id)
         except errors.UserNotParticipant:
-            invite_link = (await c.get_chat(Config.FORCE_SUB_CHANNEL)).invite_link
+            chat = await c.get_chat(channel)
+            invite_link = chat.invite_link or f"https://t.me/{str(channel).replace('@', '')}"
             return await m.reply(
-                "<blockquote>❌ <b>Join Channel First!</b>\n\nYou must join our channel to use this bot for streaming.</blockquote>",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Join Now", url=invite_link or f"https://t.me/{Config.FORCE_SUB_CHANNEL}")]]),
+                "<blockquote>❌ <b>Join Channel First!</b>\n\nYou must strictly join our channel to process and stream files.</blockquote>",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔗 Join Channel Now", url=invite_link)]]),
                 parse_mode=enums.ParseMode.HTML
             )
         except Exception as e:
-            logger.error(f"Fsub Error: {e}")
+            logger.error(f"Fsub Check Error: {e}")
 
     processing_msg = await m.reply("<i>Processing your file...</i>", parse_mode=enums.ParseMode.HTML)
 
@@ -342,37 +403,83 @@ async def handle_file(c: StreamBot, m: Message):
     file_name = getattr(file, 'file_name', None) or f"File_{bin_msg.id}"
     
     text = f"<blockquote>📁 <b>File Name:</b> <code>{file_name}</code>\n\n"
-    text += f"👇 <b>Tap on links to copy</b> 👇\n\n"
+    text += f"📺 <b>Raw Watch Link:</b>\n👉 <code>{watch_url}</code>\n\n"
+    text += f"📥 <b>Raw Download Link:</b>\n👉 <code>{download_url}</code></blockquote>\n\n"
     
     buttons = []
     shorteners_used = False
     
+    # Generating Dynamic Callback Buttons for Active Shorteners
     for i in range(1, 5):
         sh = db[f'sh{i}']
         if sh['status'] and sh['domain'] and sh['api']:
             shorteners_used = True
-            short = await c.get_shortlink(watch_url, sh['domain'], sh['api'])
-            domain_name = sh['domain']
+            btn_text = f"🔗 Share via {sh['domain'].split('.')[0].title()}"
+            buttons.append([InlineKeyboardButton(btn_text, callback_data=f"sh_{i}_{bin_msg.id}")])
             
-            text += f"🌐 <b>{domain_name}:</b>\n👉 <code>{short}</code>\n\n"
-            buttons.append([InlineKeyboardButton(f"🔗 Share/Copy {domain_name}", url=f"https://t.me/share/url?url={short}")])
-            
-    if not shorteners_used:
-        text += f"📺 <b>Watch Link:</b>\n👉 <code>{watch_url}</code>\n\n"
-        text += f"📥 <b>Download Link:</b>\n👉 <code>{download_url}</code>\n"
+    if shorteners_used:
+        text += "<i>👇 Tap any shortener below to generate a thumbnail share post:</i>"
+    else:
+        text += "<i>✅ Processed directly as no shorteners are active.</i>"
         buttons.append([InlineKeyboardButton("▶️ Watch Online", url=watch_url)])
         buttons.append([InlineKeyboardButton("📥 Fast Download", url=download_url)])
-
-    text += "</blockquote>"
     
     await processing_msg.delete()
     await m.reply_text(
         text, 
-        reply_markup=InlineKeyboardMarkup(buttons), 
+        reply_markup=InlineKeyboardMarkup(buttons) if buttons else None, 
         quote=True, 
         disable_web_page_preview=True,
         parse_mode=enums.ParseMode.HTML
     )
+
+# Callback Handler for Generating Thumbnail Post
+@bot.on_callback_query(filters.regex(r"^sh_(\d+)_(\d+)$"))
+async def shortener_callback_handler(c: StreamBot, cb):
+    await cb.answer("Generating post with thumbnail... Please wait.", show_alert=False)
+    
+    sh_num = cb.matches[0].group(1)
+    msg_id = int(cb.matches[0].group(2))
+    
+    db = await c.get_db_settings()
+    sh_data = db.get(f"sh{sh_num}")
+    
+    if not sh_data or not sh_data.get("status"):
+        return await cb.answer("❌ This shortener is currently disabled by Admin.", show_alert=True)
+        
+    # Append shortener query so the web player knows which share link to use
+    watch_url = f"{c.public_url}/watch/{msg_id}?sh={sh_num}"
+    short_url = await c.get_shortlink(watch_url, sh_data['domain'], sh_data['api'])
+    
+    file_msg = await c.get_messages(Config.BIN_CHANNEL, msg_id)
+    file = file_msg.document or file_msg.video or file_msg.audio
+    file_name = getattr(file, 'file_name', None) or f"File_{msg_id}"
+    
+    caption_text = f"<blockquote>🎥 <b>Title:</b> <code>{file_name}</code>\n\n"
+    caption_text += f"🔗 <b>Your Shareable Link:</b>\n👉 <code>{short_url}</code></blockquote>"
+    
+    buttons = [
+        [InlineKeyboardButton("▶️ Watch Now", url=short_url)],
+        [InlineKeyboardButton("📤 Share Link", url=f"https://t.me/share/url?url={short_url}")]
+    ]
+    
+    # Process Thumbnail and Send New Post
+    if getattr(file, 'thumbs', None):
+        thumb_path = await c.download_media(file.thumbs[0].file_id)
+        await cb.message.reply_photo(
+            photo=thumb_path, 
+            caption=caption_text, 
+            reply_markup=InlineKeyboardMarkup(buttons), 
+            parse_mode=enums.ParseMode.HTML
+        )
+        os.remove(thumb_path)
+    else:
+        await cb.message.reply_text(
+            caption_text, 
+            reply_markup=InlineKeyboardMarkup(buttons), 
+            disable_web_page_preview=True,
+            parse_mode=enums.ParseMode.HTML
+        )
 
 async def start_services():
     logger.info("Starting Pyrogram Client...")
@@ -381,17 +488,20 @@ async def start_services():
     # ------------------ MENU AUTO SETUP ------------------
     logger.info("Setting Bot Commands Menu...")
     try:
-        # Added Scope to FORCE update for all users immediately
+        # Force Delete Old Cache
+        await bot.delete_bot_commands()
+        
+        # Set Fresh New Commands
         await bot.set_bot_commands([
             BotCommand("start", "🚀 Start The Stream Bot"),
             BotCommand("smdetails", "📊 System & Bot Stats"),
-            BotCommand("setfsub", "🔐 Setup Force Sub (Admin)"),
+            BotCommand("forcesub", "🔐 Setup Force Sub Channel"),
             BotCommand("setsh1st", "🟡 Config 1st Shortener"),
             BotCommand("setsh2nd", "🟢 Config 2nd Shortener"),
             BotCommand("setsh3rd", "🔵 Config 3rd Shortener"),
             BotCommand("setsh4th", "🟣 Config 4th Shortener")
         ], scope=BotCommandScopeDefault())
-        logger.info("Commands menu updated successfully!")
+        logger.info("Commands menu wiped and updated successfully!")
     except Exception as e:
         logger.error(f"Failed to set bot commands: {e}")
     # -----------------------------------------------------
