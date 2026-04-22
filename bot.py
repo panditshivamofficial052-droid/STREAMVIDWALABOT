@@ -395,7 +395,7 @@ async def handle_file(c: StreamBot, m: Message):
         bin_msg = await m.forward(Config.BIN_CHANNEL)
     except Exception as e:
         logger.error(f"Forwarding Error: {e}")
-        return await processing_msg.edit(f"❌ <b>Error:</b> Failed to forward file to Bin Channel. Heroku restart might have wiped session. Ensure bot is Admin.\n<code>{e}</code>", parse_mode=enums.ParseMode.HTML)
+        return await processing_msg.edit(f"❌ <b>Error:</b> Failed to forward file to Bin Channel. Check bot admin rights.\n<code>{e}</code>", parse_mode=enums.ParseMode.HTML)
     
     watch_url = f"{c.public_url}/watch/{bin_msg.id}"
     download_url = f"{c.public_url}/download/{bin_msg.id}"
@@ -496,11 +496,19 @@ async def start_services():
     logger.info("Starting Pyrogram Client...")
     await bot.start()
     
+    # ------------------ WAKE UP BIN CHANNEL & CACHE REBUILD (Heroku Session Fix) ------------------
+    logger.info("Rebuilding Peer Cache for Heroku Restart...")
     try:
-        await bot.send_message(Config.BIN_CHANNEL, "✅ <b>Bot Engine Started!</b>\nBin Channel connection verified.", parse_mode=enums.ParseMode.HTML)
+        # Iterating over dialogs fetches chats and forces Pyrogram to cache Peer IDs
+        async for dialog in bot.get_dialogs():
+            pass 
+        logger.info("Peer Cache rebuilt successfully.")
+        
+        await bot.send_message(Config.BIN_CHANNEL, "✅ <b>Bot Engine Restarted!</b>\nPeer cache and Bin Channel connection verified.", parse_mode=enums.ParseMode.HTML)
         logger.info("Bin Channel connected and cached.")
     except Exception as e:
-        logger.error(f"Bin Channel connection failed on startup: {e}")
+        logger.error(f"Bin Channel connection/cache failed on startup: {e}")
+    # -----------------------------------------------------------------------------------------------
     
     logger.info("Setting Bot Commands Menu...")
     try:
