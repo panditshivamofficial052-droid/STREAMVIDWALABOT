@@ -13,6 +13,9 @@ from aiohttp import web
 from config import Config
 from tv_template_sheffy_samra import tv_template_sheffy_samra
 
+pyrogram.utils.MIN_CHAT_ID = -999999999999
+pyrogram.utils.MIN_CHANNEL_ID = -1009999999999
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
@@ -70,7 +73,6 @@ class StreamBot(Client):
             await self.settings.insert_one(default)
             return default
             
-        # Migration for old boolean fsub format to new dictionary format
         if isinstance(data.get("fsub"), bool):
             new_fsub = {"status": data["fsub"], "channel": ""}
             await self.settings.update_one({"id": "config"}, {"$set": {"fsub": new_fsub}})
@@ -123,7 +125,7 @@ class StreamBot(Client):
             file_name = getattr(file, 'file_name', None) or f"File_{msg_id}"
             mime_type = getattr(file, 'mime_type', None) or "video/mp4"
 
-            # Dynamic Share URL Logic based on shortener query param
+            # Dynamic Share URL Logic
             share_url = f"{self.public_url}/watch/{msg_id}"
             sh_num = request.query.get("sh")
             if sh_num and sh_num.isdigit():
@@ -235,7 +237,6 @@ class StreamBot(Client):
 
 bot = StreamBot()
 
-# Complete Dynamic Force Sub Flow
 @bot.on_message(filters.command(["forcesub"]) & filters.user(Config.OWNER_ID))
 async def toggle_fsub(c, m: Message):
     if len(m.command) < 2 or m.command[1].lower() not in ["on", "off"]:
@@ -253,11 +254,10 @@ async def toggle_fsub(c, m: Message):
         admin_states[m.from_user.id] = {"step": "fsub_channel"}
         await m.reply("🟢 <b>Force Subscribe Setup</b>\n\n👉 Please send the <b>Channel ID</b> (e.g., <code>-100123456789</code>) or <b>Username</b> (e.g., <code>@mychannel</code>):", parse_mode=enums.ParseMode.HTML)
 
-# Setup Shorteners with Conversation Logic
 @bot.on_message(filters.command(["setsh1st", "setsh2nd", "setsh3rd", "setsh4th"]) & filters.user(Config.OWNER_ID))
 async def setup_shorteners(c, m: Message):
     cmd = m.command[0].lower()
-    num = cmd[5:6] # Gets '1', '2', '3', or '4'
+    num = cmd[5:6] 
     
     if len(m.command) < 2:
         return await m.reply(f"<b>Usage:</b> <code>/{cmd} on</code> or <code>/{cmd} off</code>", parse_mode=enums.ParseMode.HTML)
@@ -274,7 +274,6 @@ async def setup_shorteners(c, m: Message):
         admin_states[m.from_user.id] = {"step": "domain", "num": num}
         await m.reply(f"🟢 <b>Setting up Shortener {num}</b>\n\n👉 Please send the <b>DOMAIN NAME</b> (e.g., <code>shareus.io</code>):", parse_mode=enums.ParseMode.HTML)
 
-# Main Conversation State Listener
 @bot.on_message(filters.private & filters.text & filters.user(Config.OWNER_ID) & ~filters.command(["start", "smdetails", "forcesub", "setsh1st", "setsh2nd", "setsh3rd", "setsh4th"]))
 async def state_handler(c, m: Message):
     user_id = m.from_user.id
@@ -283,7 +282,6 @@ async def state_handler(c, m: Message):
         state_info = admin_states[user_id]
         step = state_info["step"]
         
-        # Handle Force Sub Channel Setup
         if step == "fsub_channel":
             channel = m.text.strip()
             processing = await m.reply("<i>Verifying admin rights...</i>", parse_mode=enums.ParseMode.HTML)
@@ -300,7 +298,6 @@ async def state_handler(c, m: Message):
                 await processing.edit(f"❌ <b>Verification Failed:</b> Cannot access channel.\n\nEnsure the ID/Username is correct and I am added as an Admin.\n<code>{e}</code>", parse_mode=enums.ParseMode.HTML)
             return
 
-        # Handle Shortener Setup
         num = state_info.get("num")
         if step == "domain":
             domain = m.text.strip()
@@ -375,7 +372,6 @@ async def start_msg(c, m: Message):
 async def handle_file(c: StreamBot, m: Message):
     db = await c.get_db_settings()
     
-    # Strictly Enforced Sub Logic
     fsub_conf = db.get("fsub", {})
     if fsub_conf.get("status") and fsub_conf.get("channel"):
         channel = fsub_conf["channel"]
@@ -398,7 +394,7 @@ async def handle_file(c: StreamBot, m: Message):
         bin_msg = await m.forward(Config.BIN_CHANNEL)
     except Exception as e:
         logger.error(f"Forwarding Error: {e}")
-        return await processing_msg.edit(f"❌ <b>Error:</b> Failed to forward file to Bin Channel. Check bot admin rights.\n<code>{e}</code>", parse_mode=enums.ParseMode.HTML)
+        return await processing_msg.edit(f"❌ <b>Error:</b> Failed to forward file to Bin Channel. Heroku restart might have wiped session. Ensure bot is Admin.\n<code>{e}</code>", parse_mode=enums.ParseMode.HTML)
     
     watch_url = f"{c.public_url}/watch/{bin_msg.id}"
     download_url = f"{c.public_url}/download/{bin_msg.id}"
@@ -413,7 +409,6 @@ async def handle_file(c: StreamBot, m: Message):
     buttons = []
     shorteners_used = False
     
-    # Generating Dynamic Callback Buttons for Active Shorteners safely
     for i in range(1, 5):
         sh = db.get(f'sh{i}', {})
         if sh.get('status') and sh.get('domain') and sh.get('api'):
@@ -437,7 +432,6 @@ async def handle_file(c: StreamBot, m: Message):
         parse_mode=enums.ParseMode.HTML
     )
 
-# Callback Handler for Generating Thumbnail Post
 @bot.on_callback_query(filters.regex(r"^sh_(\d+)_(\d+)$"))
 async def shortener_callback_handler(c: StreamBot, cb):
     await cb.answer("Generating post with thumbnail... Please wait.", show_alert=False)
@@ -451,7 +445,6 @@ async def shortener_callback_handler(c: StreamBot, cb):
     if not sh_data or not sh_data.get("status"):
         return await cb.answer("❌ This shortener is currently disabled by Admin.", show_alert=True)
         
-    # Append shortener query so the web player knows which share link to use
     watch_url = f"{c.public_url}/watch/{msg_id}?sh={sh_num}"
     short_url = await c.get_shortlink(watch_url, sh_data.get('domain', ''), sh_data.get('api', ''))
     
@@ -472,7 +465,6 @@ async def shortener_callback_handler(c: StreamBot, cb):
         [InlineKeyboardButton("📤 Share Link", url=f"https://t.me/share/url?url={short_url}")]
     ]
     
-    # Process Thumbnail safely and Send New Post
     if getattr(file, 'thumbs', None):
         try:
             thumb_path = await c.download_media(file.thumbs[0].file_id)
@@ -485,7 +477,6 @@ async def shortener_callback_handler(c: StreamBot, cb):
             os.remove(thumb_path)
         except Exception as e:
             logger.error(f"Thumbnail Download Error: {e}")
-            # Fallback if photo fails
             await cb.message.reply_text(
                 caption_text, 
                 reply_markup=InlineKeyboardMarkup(buttons), 
@@ -504,13 +495,17 @@ async def start_services():
     logger.info("Starting Pyrogram Client...")
     await bot.start()
     
-    # ------------------ MENU AUTO SETUP ------------------
+    # ------------------ WAKE UP BIN CHANNEL (Fix for Heroku Session Wipe) ------------------
+    try:
+        await bot.send_message(Config.BIN_CHANNEL, "✅ <b>Bot Engine Started!</b>\nBin Channel connection verified.", parse_mode=enums.ParseMode.HTML)
+        logger.info("Bin Channel connected and cached.")
+    except Exception as e:
+        logger.error(f"Bin Channel connection failed on startup: {e}")
+    # ---------------------------------------------------------------------------------------
+    
     logger.info("Setting Bot Commands Menu...")
     try:
-        # Force Delete Old Cache
         await bot.delete_bot_commands()
-        
-        # Set Fresh New Commands
         await bot.set_bot_commands([
             BotCommand("start", "🚀 Start The Stream Bot"),
             BotCommand("smdetails", "📊 System & Bot Stats"),
@@ -523,7 +518,6 @@ async def start_services():
         logger.info("Commands menu wiped and updated successfully!")
     except Exception as e:
         logger.error(f"Failed to set bot commands: {e}")
-    # -----------------------------------------------------
     
     logger.info(f"Starting Web Server on {Config.BIND_ADRESS}:{Config.PORT}")
     app = web.Application()
