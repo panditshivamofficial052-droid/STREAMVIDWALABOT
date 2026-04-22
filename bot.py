@@ -273,14 +273,13 @@ async def set_bin_channel(c, m: Message):
             return await processing.edit("❌ <b>Error:</b> I am not an admin in that channel. Please promote me first.")
         
         chat = await c.get_chat(channel)
-        await c.settings.update_one({"id": "config"}, {"$set": {"bin_channel": chat.id}})
+        await c.settings.update_one({"id": "config"}, {"$set": {"bin_channel": chat.id}}, upsert=True)
         
-        await c.send_message(chat.id, "✅ <b>Bin Channel connected</b>", parse_mode=enums.ParseMode.HTML)
-        
-        await processing.edit(f"✅ <b>Success!</b> Channel set to <b>{chat.title or chat.id}</b>", parse_mode=enums.ParseMode.HTML)
+        await c.send_message(chat.id, "✅ <b>Bin Channel connected and cached in Database.</b>", parse_mode=enums.ParseMode.HTML)
+        await processing.edit(f"✅ <b>Success!</b> Bin Channel is set to <b>{chat.title or chat.id}</b> and saved in MongoDB.", parse_mode=enums.ParseMode.HTML)
     except Exception as e:
-        await processing.edit(f"❌ <b>Verification Failed:</b> Cannot access channel.\n\nEnsure the ID is correct and I am added as an Admin.\n<code>{e}</code>", parse_mode=enums.ParseMode.HTML)
-
+        await processing.edit(f"❌ <b>Verification Failed:</b> Cannot access channel. Ensure ID is correct and bot is Admin.\n<code>{e}</code>", parse_mode=enums.ParseMode.HTML)
+        
 
 @bot.on_message(filters.command(["forcesub"]) & filters.user(Config.OWNER_ID))
 async def toggle_fsub(c, m: Message):
@@ -290,7 +289,7 @@ async def toggle_fsub(c, m: Message):
     state = m.command[1].lower()
     
     if state == "off":
-        await c.settings.update_one({"id": "config"}, {"$set": {"fsub.status": False}})
+        await c.settings.update_one({"id": "config"}, {"$set": {"fsub.status": False}}, upsert=True)
         if m.from_user.id in admin_states:
             del admin_states[m.from_user.id]
         await m.reply("✅ <b>Force Subscribe has been turned OFF.</b>", parse_mode=enums.ParseMode.HTML)
@@ -298,6 +297,7 @@ async def toggle_fsub(c, m: Message):
     elif state == "on":
         admin_states[m.from_user.id] = {"step": "fsub_channel"}
         await m.reply("🟢 <b>Force Subscribe Setup</b>\n\n👉 Please send the <b>Channel ID</b> (e.g., <code>-100123456789</code>) or <b>Username</b> (e.g., <code>@mychannel</code>):", parse_mode=enums.ParseMode.HTML)
+
 
 @bot.on_message(filters.command(["setsh1st", "setsh2nd", "setsh3rd", "setsh4th"]) & filters.user(Config.OWNER_ID))
 async def setup_shorteners(c, m: Message):
@@ -310,7 +310,7 @@ async def setup_shorteners(c, m: Message):
     state = m.command[1].lower()
     
     if state == "off":
-        await c.settings.update_one({"id": "config"}, {"$set": {f"sh{num}.status": False}})
+        await c.settings.update_one({"id": "config"}, {"$set": {f"sh{num}.status": False}}, upsert=True)
         if m.from_user.id in admin_states:
             del admin_states[m.from_user.id]
         await m.reply(f"✅ <b>Shortener {num}</b> has been turned <b>OFF</b>.", parse_mode=enums.ParseMode.HTML)
@@ -318,6 +318,7 @@ async def setup_shorteners(c, m: Message):
     elif state == "on":
         admin_states[m.from_user.id] = {"step": "domain", "num": num}
         await m.reply(f"🟢 <b>Setting up Shortener {num}</b>\n\n👉 Please send the <b>DOMAIN NAME</b> (e.g., <code>shareus.io</code>):", parse_mode=enums.ParseMode.HTML)
+
 
 @bot.on_message(filters.private & filters.text & filters.user(Config.OWNER_ID) & ~filters.command(["start", "smdetails", "forcesub", "setsh1st", "setsh2nd", "setsh3rd", "setsh4th", "sbinch"]))
 async def state_handler(c, m: Message):
@@ -336,7 +337,7 @@ async def state_handler(c, m: Message):
                     return await processing.edit("❌ <b>Error:</b> I am not an admin in that channel. Please promote me first.")
                 
                 chat = await c.get_chat(channel)
-                await c.settings.update_one({"id": "config"}, {"$set": {"fsub.status": True, "fsub.channel": channel}})
+                await c.settings.update_one({"id": "config"}, {"$set": {"fsub.status": True, "fsub.channel": channel}}, upsert=True)
                 del admin_states[user_id]
                 await processing.edit(f"✅ <b>Success!</b> Force Subscribe is now strictly <b>ON</b> for <b>{chat.title or channel}</b>.", parse_mode=enums.ParseMode.HTML)
             except Exception as e:
@@ -346,15 +347,16 @@ async def state_handler(c, m: Message):
         num = state_info.get("num")
         if step == "domain":
             domain = m.text.strip()
-            await c.settings.update_one({"id": "config"}, {"$set": {f"sh{num}.domain": domain}})
+            await c.settings.update_one({"id": "config"}, {"$set": {f"sh{num}.domain": domain}}, upsert=True)
             admin_states[user_id]["step"] = "api"
             await m.reply(f"✅ <b>Domain saved:</b> <code>{domain}</code>\n\n👉 Now, please send the <b>API KEY</b>:", parse_mode=enums.ParseMode.HTML)
         
         elif step == "api":
             api = m.text.strip()
-            await c.settings.update_one({"id": "config"}, {"$set": {f"sh{num}.api": api, f"sh{num}.status": True}})
+            await c.settings.update_one({"id": "config"}, {"$set": {f"sh{num}.api": api, f"sh{num}.status": True}}, upsert=True)
             del admin_states[user_id]
             await m.reply(f"🎉 <b>Success!</b>\n\n✅ <b>API saved.</b>\n🟢 <b>Shortener {num} is now completely configured and turned ON!</b>", parse_mode=enums.ParseMode.HTML)
+
 
 @bot.on_message(filters.command("smdetails") & filters.user(Config.OWNER_ID))
 async def smdetails_cmd(c: StreamBot, m: Message):
@@ -378,11 +380,13 @@ async def smdetails_cmd(c: StreamBot, m: Message):
     
     text += f"🔗 <b>Shorteners Status:</b>\n\n"
     for i in range(1, 5):
-        sh = db[f'sh{i}']
-        status = "✅ <b>ON</b>" if sh['status'] else "❌ <b>OFF</b>"
+        sh = db.get(f'sh{i}', {})
+        status = "✅ <b>ON</b>" if sh.get('status') else "❌ <b>OFF</b>"
+        domain = sh.get('domain') if sh.get('domain') else 'Not Set'
+        api = sh.get('api') if sh.get('api') else 'Not Set'
         text += f"<b>Shortener {i}:</b> {status}\n"
-        text += f" ├ <b>Domain:</b> <code>{sh['domain'] or 'Not Set'}</code>\n"
-        text += f" └ <b>API:</b> <code>{sh['api'] or 'Not Set'}</code>\n\n"
+        text += f" ├ <b>Domain:</b> <code>{domain}</code>\n"
+        text += f" └ <b>API:</b> <code>{api}</code>\n\n"
         
     await m.reply(text, parse_mode=enums.ParseMode.HTML)
 
@@ -402,11 +406,13 @@ async def start_msg(c, m: Message):
     fsub_conf = db.get("fsub", {})
     buttons = []
     
+    buttons.append([InlineKeyboardButton("📢 Updates Channel", url="https://t.me/kamai4youpayment")])
+    
     if fsub_conf.get("status") and fsub_conf.get("channel"):
         try:
             chat = await c.get_chat(fsub_conf["channel"])
             invite_link = chat.invite_link or f"https://t.me/{str(fsub_conf['channel']).replace('@', '')}"
-            buttons.append([InlineKeyboardButton("📢 Join Updates Channel", url=invite_link)])
+            buttons.append([InlineKeyboardButton("🔗 Join Force Sub Channel", url=invite_link)])
         except Exception:
             pass
             
@@ -446,10 +452,7 @@ async def handle_file(c: StreamBot, m: Message):
         bin_msg = await m.forward(bin_channel)
     except Exception as e:
         logger.error(f"Forwarding Error: {e}")
-        error_txt = f"❌ <b>Error:</b> Failed to forward file to Bin Channel.\n\n"
-        error_txt += f"⚠️ <b>If Heroku restarted, the cache might be wiped!</b>\n"
-        error_txt += f"👉 <b>Quick Fix:</b> Just send <code>/sbinch {bin_channel}</code> again to refresh it!\n\n<code>{e}</code>"
-        return await processing_msg.edit(error_txt, parse_mode=enums.ParseMode.HTML)
+        return await processing_msg.edit(f"❌ <b>Error:</b> Failed to forward file. Verify Bin Channel is set and bot is Admin.\n<code>{e}</code>", parse_mode=enums.ParseMode.HTML)
     
     watch_url = f"{c.public_url}/watch/{bin_msg.id}"
     download_url = f"{c.public_url}/download/{bin_msg.id}"
@@ -558,10 +561,10 @@ async def start_services():
         db = await bot.get_db_settings()
         bin_channel = db.get("bin_channel")
         if bin_channel:
-            await bot.send_message(bin_channel, "✅ <b>Bot Engine Restarted!</b>\nMongoDB connection verified.", parse_mode=enums.ParseMode.HTML)
-            logger.info("Bin Channel ping successful via MongoDB Data.")
+            await bot.send_message(bin_channel, "✅ <b>Bot Engine Started!</b>", parse_mode=enums.ParseMode.HTML)
+            logger.info("Bin Channel ping successful.")
     except Exception as e:
-        logger.warning(f"Bin Channel ping failed on startup. Cache might be wiped by Heroku. Send /sbinch to fix. Error: {e}")
+        logger.warning(f"Bin Channel ping failed on startup. Error: {e}")
     
     logger.info("Setting Bot Commands Menu...")
     try:
@@ -599,6 +602,7 @@ async def start_services():
     logger.info("Stopping services...")
     await runner.cleanup()
     await bot.stop()
+
 
 if __name__ == "__main__":
     loop = asyncio.get_event_loop()
