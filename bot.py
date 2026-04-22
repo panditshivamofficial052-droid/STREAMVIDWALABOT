@@ -6,15 +6,13 @@ import logging
 import psutil
 import aiohttp
 import asyncio
+import pyrogram.utils
 from pyrogram import Client, idle, filters, errors, enums
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, BotCommand, BotCommandScopeDefault
 from motor.motor_asyncio import AsyncIOMotorClient
 from aiohttp import web
 from config import Config
 from tv_template_sheffy_samra import tv_template_sheffy_samra
-
-pyrogram.utils.MIN_CHAT_ID = -999999999999
-pyrogram.utils.MIN_CHANNEL_ID = -1009999999999
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -43,6 +41,10 @@ def get_readable_time(seconds: int) -> str:
     time_list.reverse()
     ping_time += ":".join(time_list)
     return ping_time
+
+# Pyrogram PeerIdInvalid Fix for 64-bit IDs
+pyrogram.utils.MIN_CHAT_ID = -9999999999999
+pyrogram.utils.MIN_CHANNEL_ID = -10099999999999
 
 class StreamBot(Client):
     def __init__(self):
@@ -125,7 +127,6 @@ class StreamBot(Client):
             file_name = getattr(file, 'file_name', None) or f"File_{msg_id}"
             mime_type = getattr(file, 'mime_type', None) or "video/mp4"
 
-            # Dynamic Share URL Logic
             share_url = f"{self.public_url}/watch/{msg_id}"
             sh_num = request.query.get("sh")
             if sh_num and sh_num.isdigit():
@@ -495,13 +496,11 @@ async def start_services():
     logger.info("Starting Pyrogram Client...")
     await bot.start()
     
-    # ------------------ WAKE UP BIN CHANNEL (Fix for Heroku Session Wipe) ------------------
     try:
         await bot.send_message(Config.BIN_CHANNEL, "✅ <b>Bot Engine Started!</b>\nBin Channel connection verified.", parse_mode=enums.ParseMode.HTML)
         logger.info("Bin Channel connected and cached.")
     except Exception as e:
         logger.error(f"Bin Channel connection failed on startup: {e}")
-    # ---------------------------------------------------------------------------------------
     
     logger.info("Setting Bot Commands Menu...")
     try:
