@@ -464,7 +464,7 @@ async def handle_file(c: StreamBot, m: Message):
         bin_msg = await m.forward(bin_channel)
     except Exception as e:
         logger.error(f"Forwarding Error: {e}")
-        return await processing_msg.edit(f"❌ <b>Error:</b> Failed to forward file. Verify Bin Channel is set and bot is Admin.\n<code>{e}</code>", parse_mode=enums.ParseMode.HTML)
+        return await processing_msg.edit(f"❌ <b>Error:</b> Failed to forward file. Verify Bin Channel is set and bot is Admin in the channel.\n<code>{e}</code>", parse_mode=enums.ParseMode.HTML)
     
     watch_url = f"{c.public_url}/watch/{bin_msg.id}"
     download_url = f"{c.public_url}/download/{bin_msg.id}"
@@ -536,8 +536,10 @@ async def shortener_callback_handler(c: StreamBot, cb):
     file = file_msg.document or file_msg.video or file_msg.audio
     file_name = getattr(file, 'file_name', None) or f"File_{msg_id}"
     
+    # Updated caption with Copyable Download Link
     caption_text = f"<blockquote>🎥 <b>Title:</b> <code>{file_name}</code>\n\n"
-    caption_text += f"🔗 <b>Your Shareable Link:</b>\n👉 <code>{short_watch_url}</code></blockquote>"
+    caption_text += f"📺 <b>Watch Link:</b>\n👉 <code>{short_watch_url}</code>\n\n"
+    caption_text += f"📥 <b>Download Link (Tap to copy):</b>\n👉 <code>{short_download_url}</code></blockquote>"
     
     buttons = [
         [InlineKeyboardButton("▶️ Watch Now", url=short_watch_url)],
