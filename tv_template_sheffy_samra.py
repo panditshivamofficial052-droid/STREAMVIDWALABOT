@@ -21,7 +21,6 @@ tv_template_sheffy_samra = """
             -webkit-tap-highlight-color: transparent;
         }
 
-        /* Container pushed slightly upwards */
         .main-container {
             width: 100%;
             max-width: 850px;
@@ -53,7 +52,6 @@ tv_template_sheffy_samra = """
             100% { text-shadow: 0 0 15px rgba(229, 9, 20, 1), 0 0 30px rgba(229, 9, 20, 0.8), 0 0 45px rgba(229, 9, 20, 0.6); }
         }
 
-        /* Title */
         .video-title {
             font-size: 14px;
             font-weight: 700;
@@ -68,7 +66,6 @@ tv_template_sheffy_samra = """
             letter-spacing: 0.5px;
         }
 
-        /* Native Player Wrapper with Stroke/Outline */
         .player-wrapper {
             width: 100%;
             position: relative;
@@ -79,7 +76,6 @@ tv_template_sheffy_samra = """
             padding: 2px;
         }
 
-        /* The HTML5 Video Element */
         video {
             width: 100%;
             aspect-ratio: 16/9;
@@ -89,7 +85,6 @@ tv_template_sheffy_samra = """
             display: block;
         }
 
-        /* Action Buttons Area */
         .action-buttons {
             display: flex;
             flex-wrap: wrap;
@@ -122,7 +117,6 @@ tv_template_sheffy_samra = """
             transform: scale(0.95);
         }
 
-        /* Button Colors & Gradients */
         .btn-download {
             background: linear-gradient(135deg, #e52d27, #b31217);
             box-shadow: 0 4px 15px rgba(229, 45, 39, 0.4);
@@ -138,14 +132,12 @@ tv_template_sheffy_samra = """
             box-shadow: 0 4px 15px rgba(0, 114, 255, 0.4);
         }
 
-        /* SVG Icons in Buttons */
         .btn svg {
             width: 18px;
             height: 18px;
             fill: #ffffff;
         }
 
-        /* Copyright Footer */
         .copyright {
             margin-top: 40px;
             font-size: 12px;
@@ -166,7 +158,7 @@ tv_template_sheffy_samra = """
             color: #ffffff;
         }
 
-        /* Toast Notification */
+        /* Toast Notification Configuration */
         #toast {
             position: fixed;
             bottom: 30px;
@@ -233,30 +225,21 @@ tv_template_sheffy_samra = """
     <div id="toast">LINK COPIED!</div>
 
     <script>
-        // Clean Title
         const cleanName = "[[FILE_NAME]]".replace(/\.[^/.]+$/, "").toUpperCase();
         document.getElementById('displayFileName').innerText = cleanName;
 
-        // Dynamic Share URL mapped from backend
         const SHARE_URL = "[[SHARE_URL]]";
 
-        // Native Share Logic
+        // Strict Copy to Clipboard Only
         function shareLink() {
-            if (navigator.share) {
-                navigator.share({ 
-                    title: cleanName, 
-                    url: SHARE_URL 
-                }).catch((err) => console.log('Share error:', err));
-            } else {
-                // Fallback to clipboard
-                navigator.clipboard.writeText(SHARE_URL).then(() => {
-                    const toast = document.getElementById('toast');
-                    toast.classList.add('show');
-                    setTimeout(() => toast.classList.remove('show'), 2000);
-                }).catch(err => {
-                    console.error("Failed to copy: ", err);
-                });
-            }
+            navigator.clipboard.writeText(SHARE_URL).then(() => {
+                const toast = document.getElementById('toast');
+                toast.classList.add('show');
+                setTimeout(() => toast.classList.remove('show'), 2000);
+            }).catch(err => {
+                console.error("Failed to copy: ", err);
+                alert("Failed to copy link. Please manually copy the URL.");
+            });
         }
     </script>
 </body>
