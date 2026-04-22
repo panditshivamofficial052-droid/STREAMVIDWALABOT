@@ -161,6 +161,9 @@ tv_template_sheffy_samra = """
         const seekbar = document.getElementById('tvProgressBg');
         const seekTooltip = document.getElementById('seekTooltip');
 
+        // Dynamically assigned Shortened Share URL logic
+        const SHARE_URL = "[[SHARE_URL]]";
+
         let controlsTimeout, menuTimeout, peekTimer;
         let isMenuOpen = false;
 
@@ -168,8 +171,6 @@ tv_template_sheffy_samra = """
         document.getElementById('displayFileName').innerText = cleanName;
 
         video.addEventListener('loadedmetadata', () => {
-            // Note: Modern browsers may require user interaction for unmuted autoplay.
-            // If autoplay works, this promise resolves. If it gets blocked, it falls back to 'TAP TO PLAY'.
             video.play().then(() => {
                 showOSD("PLAYING");
                 wakeUI();
@@ -415,9 +416,9 @@ tv_template_sheffy_samra = """
 
         function shareLink() {
             if (navigator.share) {
-                navigator.share({ title: '[[FILE_NAME]]', url: window.location.href });
+                navigator.share({ title: '[[FILE_NAME]]', url: SHARE_URL });
             } else {
-                navigator.clipboard.writeText(window.location.href).then(() => {
+                navigator.clipboard.writeText(SHARE_URL).then(() => {
                     const toast = document.getElementById('toast');
                     toast.classList.add('show');
                     setTimeout(() => toast.classList.remove('show'), 2000);
