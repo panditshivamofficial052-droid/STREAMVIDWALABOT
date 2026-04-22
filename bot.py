@@ -394,7 +394,11 @@ async def handle_file(c: StreamBot, m: Message):
 
     processing_msg = await m.reply("<i>Processing your file...</i>", parse_mode=enums.ParseMode.HTML)
 
-    bin_msg = await m.forward(Config.BIN_CHANNEL)
+    try:
+        bin_msg = await m.forward(Config.BIN_CHANNEL)
+    except Exception as e:
+        logger.error(f"Forwarding Error: {e}")
+        return await processing_msg.edit(f"❌ <b>Error:</b> Failed to forward file to Bin Channel. Check bot admin rights.\n<code>{e}</code>", parse_mode=enums.ParseMode.HTML)
     
     watch_url = f"{c.public_url}/watch/{bin_msg.id}"
     download_url = f"{c.public_url}/download/{bin_msg.id}"
@@ -409,10 +413,10 @@ async def handle_file(c: StreamBot, m: Message):
     buttons = []
     shorteners_used = False
     
-    # Generating Dynamic Callback Buttons for Active Shorteners
+    # Generating Dynamic Callback Buttons for Active Shorteners safely
     for i in range(1, 5):
-        sh = db[f'sh{i}']
-        if sh['status'] and sh['domain'] and sh['api']:
+        sh = db.get(f'sh{i}', {})
+        if sh.get('status') and sh.get('domain') and sh.get('api'):
             shorteners_used = True
             btn_text = f"🔗 Share via {sh['domain'].split('.')[0].title()}"
             buttons.append([InlineKeyboardButton(btn_text, callback_data=f"sh_{i}_{bin_msg.id}")])
@@ -442,16 +446,21 @@ async def shortener_callback_handler(c: StreamBot, cb):
     msg_id = int(cb.matches[0].group(2))
     
     db = await c.get_db_settings()
-    sh_data = db.get(f"sh{sh_num}")
+    sh_data = db.get(f"sh{sh_num}", {})
     
     if not sh_data or not sh_data.get("status"):
         return await cb.answer("❌ This shortener is currently disabled by Admin.", show_alert=True)
         
     # Append shortener query so the web player knows which share link to use
     watch_url = f"{c.public_url}/watch/{msg_id}?sh={sh_num}"
-    short_url = await c.get_shortlink(watch_url, sh_data['domain'], sh_data['api'])
+    short_url = await c.get_shortlink(watch_url, sh_data.get('domain', ''), sh_data.get('api', ''))
     
-    file_msg = await c.get_messages(Config.BIN_CHANNEL, msg_id)
+    try:
+        file_msg = await c.get_messages(Config.BIN_CHANNEL, msg_id)
+    except Exception as e:
+        logger.error(f"Message Fetch Error: {e}")
+        return await cb.message.reply_text(f"❌ <b>Error:</b> Failed to fetch file from Bin Channel.\n<code>{e}</code>", parse_mode=enums.ParseMode.HTML)
+        
     file = file_msg.document or file_msg.video or file_msg.audio
     file_name = getattr(file, 'file_name', None) or f"File_{msg_id}"
     
@@ -463,16 +472,26 @@ async def shortener_callback_handler(c: StreamBot, cb):
         [InlineKeyboardButton("📤 Share Link", url=f"https://t.me/share/url?url={short_url}")]
     ]
     
-    # Process Thumbnail and Send New Post
+    # Process Thumbnail safely and Send New Post
     if getattr(file, 'thumbs', None):
-        thumb_path = await c.download_media(file.thumbs[0].file_id)
-        await cb.message.reply_photo(
-            photo=thumb_path, 
-            caption=caption_text, 
-            reply_markup=InlineKeyboardMarkup(buttons), 
-            parse_mode=enums.ParseMode.HTML
-        )
-        os.remove(thumb_path)
+        try:
+            thumb_path = await c.download_media(file.thumbs[0].file_id)
+            await cb.message.reply_photo(
+                photo=thumb_path, 
+                caption=caption_text, 
+                reply_markup=InlineKeyboardMarkup(buttons), 
+                parse_mode=enums.ParseMode.HTML
+            )
+            os.remove(thumb_path)
+        except Exception as e:
+            logger.error(f"Thumbnail Download Error: {e}")
+            # Fallback if photo fails
+            await cb.message.reply_text(
+                caption_text, 
+                reply_markup=InlineKeyboardMarkup(buttons), 
+                disable_web_page_preview=True,
+                parse_mode=enums.ParseMode.HTML
+            )
     else:
         await cb.message.reply_text(
             caption_text, 
