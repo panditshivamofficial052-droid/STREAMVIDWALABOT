@@ -515,8 +515,13 @@ async def shortener_callback_handler(c: StreamBot, cb):
     if not sh_data or not sh_data.get("status"):
         return await cb.answer("❌ This shortener is disabled.", show_alert=True)
         
+    # Shorten Watch URL
     watch_url = f"{c.public_url}/watch/{msg_id}?sh={sh_num}"
-    short_url = await c.get_shortlink(watch_url, sh_data.get('domain', ''), sh_data.get('api', ''))
+    short_watch_url = await c.get_shortlink(watch_url, sh_data.get('domain', ''), sh_data.get('api', ''))
+    
+    # Shorten Download URL
+    raw_download_url = f"{c.public_url}/download/{msg_id}"
+    short_download_url = await c.get_shortlink(raw_download_url, sh_data.get('domain', ''), sh_data.get('api', ''))
     
     bin_channel = db.get("bin_channel")
     if not bin_channel:
@@ -532,11 +537,12 @@ async def shortener_callback_handler(c: StreamBot, cb):
     file_name = getattr(file, 'file_name', None) or f"File_{msg_id}"
     
     caption_text = f"<blockquote>🎥 <b>Title:</b> <code>{file_name}</code>\n\n"
-    caption_text += f"🔗 <b>Your Shareable Link:</b>\n👉 <code>{short_url}</code></blockquote>"
+    caption_text += f"🔗 <b>Your Shareable Link:</b>\n👉 <code>{short_watch_url}</code></blockquote>"
     
     buttons = [
-        [InlineKeyboardButton("▶️ Watch Now", url=short_url)],
-        [InlineKeyboardButton("📤 Share Link", url=f"https://t.me/share/url?url={short_url}")]
+        [InlineKeyboardButton("▶️ Watch Now", url=short_watch_url)],
+        [InlineKeyboardButton("📥 Fast Download", url=short_download_url)],
+        [InlineKeyboardButton("📤 Share Link", url=f"https://t.me/share/url?url={short_watch_url}")]
     ]
     
     # Append Tutorial Link if available
