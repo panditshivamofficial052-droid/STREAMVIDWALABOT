@@ -6,12 +6,17 @@ import logging
 import psutil
 import aiohttp
 import asyncio
+import pyrogram.utils
 from pyrogram import Client, idle, filters, errors, enums
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, BotCommand, BotCommandScopeDefault
 from motor.motor_asyncio import AsyncIOMotorClient
 from aiohttp import web
 from config import Config
 from tv_template_sheffy_samra import tv_template_sheffy_samra
+
+# Pyrogram PeerIdInvalid Hack
+pyrogram.utils.MIN_CHAT_ID = -999999999999
+pyrogram.utils.MIN_CHANNEL_ID = -1009999999999
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -254,26 +259,26 @@ bot = StreamBot()
 @bot.on_message(filters.command(["sbinch"]) & filters.user(Config.OWNER_ID))
 async def set_bin_channel(c, m: Message):
     if len(m.command) < 2:
-        return await m.reply("<b>Usage:</b> <code>/sbinch -100123456789</code>", parse_mode=enums.ParseMode.HTML)
+        return await m.reply("<b>Usage:</b> <code>/sbinch -100123456789</code>\nOr use username: <code>/sbinch @mybinchannel</code>", parse_mode=enums.ParseMode.HTML)
     
     try:
         channel = int(m.command[1])
     except ValueError:
         channel = m.command[1]
         
-    processing = await m.reply("<i>Verifying Bin Channel access...</i>", parse_mode=enums.ParseMode.HTML)
+    # processing = await m.reply("<i>Verifying Bin Channel access...</i>", parse_mode=enums.ParseMode.HTML)
     try:
-        member = await c.get_chat_member(channel, c.me.id)
-        if member.status not in [enums.ChatMemberStatus.ADMINISTRATOR, enums.ChatMemberStatus.OWNER]:
-            return await processing.edit("❌ <b>Error:</b> I am not an admin in that channel.")
+        # member = await c.get_chat_member(channel, c.me.id)
+        # if member.status not in [enums.ChatMemberStatus.ADMINISTRATOR, enums.ChatMemberStatus.OWNER]:
+        #     return await processing.edit("❌ <b>Error:</b> I am not an admin in that channel. Please promote me first.")
         
-        chat = await c.get_chat(channel)
-        await c.settings.update_one({"id": "config"}, {"$set": {"bin_channel": chat.id}}, upsert=True)
+        # chat = await c.get_chat(channel)
+        await c.settings.update_one({"id": "config"}, {"$set": {"bin_channel": channel}}, upsert=True)
         
-        await c.send_message(chat.id, "✅ <b>Bin Channel connected and verified.</b>", parse_mode=enums.ParseMode.HTML)
-        await processing.edit(f"✅ <b>Success!</b> Bin Channel is set to <b>{chat.title or chat.id}</b> and saved in MongoDB.", parse_mode=enums.ParseMode.HTML)
+        # await c.send_message(chat.id, "✅ <b>Bin Channel connected and cached in Database.</b>", parse_mode=enums.ParseMode.HTML)
+        await m.reply(f"✅ <b>Success!</b> Bin Channel ID <b>{channel}</b> is saved in MongoDB.", parse_mode=enums.ParseMode.HTML)
     except Exception as e:
-        await processing.edit(f"❌ <b>Verification Failed.</b> Ensure bot is Admin.\n<code>{e}</code>", parse_mode=enums.ParseMode.HTML)
+        await m.reply(f"❌ <b>Error saving channel:</b>\n<code>{e}</code>", parse_mode=enums.ParseMode.HTML)
 
 @bot.on_message(filters.command(["forcesub"]) & filters.user(Config.OWNER_ID))
 async def toggle_fsub(c, m: Message):
@@ -443,7 +448,7 @@ async def handle_file(c: StreamBot, m: Message):
         bin_msg = await m.forward(bin_channel)
     except Exception as e:
         logger.error(f"Forwarding Error: {e}")
-        return await processing_msg.edit(f"❌ <b>Error:</b> Failed to forward file. Verify Bin Channel is set and bot is Admin.\n<code>{e}</code>", parse_mode=enums.ParseMode.HTML)
+        return await processing_msg.edit(f"❌ <b>Error:</b> Failed to forward file. Ensure bot is Admin in Bin Channel ({bin_channel}).\n<code>{e}</code>", parse_mode=enums.ParseMode.HTML)
     
     watch_url = f"{c.public_url}/watch/{bin_msg.id}"
     download_url = f"{c.public_url}/download/{bin_msg.id}"
@@ -548,14 +553,14 @@ async def start_services():
     logger.info("Starting Pyrogram Client...")
     await bot.start()
     
-    try:
-        db = await bot.get_db_settings()
-        bin_channel = db.get("bin_channel")
-        if bin_channel:
-            await bot.send_message(bin_channel, "✅ <b>Bot Engine Started!</b>", parse_mode=enums.ParseMode.HTML)
-            logger.info("Bin Channel ping successful.")
-    except Exception as e:
-        logger.warning(f"Bin Channel ping failed on startup. Error: {e}")
+    # try:
+    #     db = await bot.get_db_settings()
+    #     bin_channel = db.get("bin_channel")
+    #     if bin_channel:
+    #         await bot.send_message(bin_channel, "✅ <b>Bot Engine Started!</b>", parse_mode=enums.ParseMode.HTML)
+    #         logger.info("Bin Channel ping successful.")
+    # except Exception as e:
+    #     logger.warning(f"Bin Channel ping failed on startup. Error: {e}")
     
     logger.info("Setting Bot Commands Menu...")
     try:
