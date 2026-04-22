@@ -275,9 +275,9 @@ async def set_bin_channel(c, m: Message):
         chat = await c.get_chat(channel)
         await c.settings.update_one({"id": "config"}, {"$set": {"bin_channel": chat.id}})
         
-        await c.send_message(chat.id, "✅ <b>Bin Channel properly connected and cached in Database!</b>", parse_mode=enums.ParseMode.HTML)
+        await c.send_message(chat.id, "✅ <b>Bin Channel connected</b>", parse_mode=enums.ParseMode.HTML)
         
-        await processing.edit(f"✅ <b>Success!</b> Bin Channel is now permanently set to <b>{chat.title or chat.id}</b>.\n\nI have saved it in MongoDB. It will perfectly survive Heroku restarts now!", parse_mode=enums.ParseMode.HTML)
+        await processing.edit(f"✅ <b>Success!</b> Channel set to <b>{chat.title or chat.id}</b>", parse_mode=enums.ParseMode.HTML)
     except Exception as e:
         await processing.edit(f"❌ <b>Verification Failed:</b> Cannot access channel.\n\nEnsure the ID is correct and I am added as an Admin.\n<code>{e}</code>", parse_mode=enums.ParseMode.HTML)
 
